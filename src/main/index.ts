@@ -31,8 +31,8 @@ let dropWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let isQuitting = false
 
-const DROP_W = 228
-const DROP_H = 96
+const TRAY_POPUP_W = 260
+const TRAY_POPUP_H = 320
 
 function iconPath(): string {
   if (process.platform === 'win32') {
@@ -96,22 +96,34 @@ function showMainWindow(): void {
   if (process.platform === 'darwin') app.dock?.show()
 }
 
-function positionDropWindow(win: BrowserWindow): void {
+/** 托盘下拉面板贴在菜单栏图标下方（系统原生菜单无法拖文件，所以用自定义面板） */
+function positionTrayPopup(win: BrowserWindow): void {
   const wa = screen.getPrimaryDisplay().workArea
-  win.setBounds({
-    x: Math.round(wa.x + wa.width - DROP_W - 18),
-    y: Math.round(wa.y + 10),
-    width: DROP_W,
-    height: DROP_H
-  })
+  const tb = tray?.getBounds()
+  let x: number
+  let y: number
+  if (tb && tb.width > 0) {
+    x = Math.round(tb.x + tb.width / 2 - TRAY_POPUP_W / 2)
+    y = Math.round(tb.y + tb.height + 6)
+    // Windows 托盘多半在底部
+    if (process.platform === 'win32' && tb.y > wa.height / 2) {
+      y = Math.round(tb.y - TRAY_POPUP_H - 6)
+    }
+  } else {
+    x = Math.round(wa.x + wa.width - TRAY_POPUP_W - 16)
+    y = Math.round(wa.y + 8)
+  }
+  x = Math.min(Math.max(wa.x + 8, x), wa.x + wa.width - TRAY_POPUP_W - 8)
+  y = Math.min(Math.max(wa.y + 4, y), wa.y + wa.height - TRAY_POPUP_H - 8)
+  win.setBounds({ x, y, width: TRAY_POPUP_W, height: TRAY_POPUP_H })
 }
 
 function createDropWindow(): void {
   if (dropWindow && !dropWindow.isDestroyed()) return
 
   dropWindow = new BrowserWindow({
-    width: DROP_W,
-    height: DROP_H,
+    width: TRAY_POPUP_W,
+    height: TRAY_POPUP_H,
     show: false,
     frame: false,
     transparent: true,
@@ -123,7 +135,7 @@ function createDropWindow(): void {
     alwaysOnTop: true,
     hasShadow: true,
     focusable: true,
-    title: 'PeerSwitch 拖放',
+    title: 'PeerSwitch 菜单',
     backgroundColor: '#00000000',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -134,11 +146,14 @@ function createDropWindow(): void {
   })
 
   if (process.platform === 'darwin') {
-    dropWindow.setAlwaysOnTop(true, 'floating')
+    dropWindow.setAlwaysOnTop(true, 'pop-up-menu')
     dropWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
   }
 
-  positionDropWindow(dropWindow)
+  dropWindow.on('blur', () => {
+    // 失焦关闭，行为接近系统下拉菜单
+    if (!isQuitting) hideDropWindow()
+  })
 
   dropWindow.on('closed', () => {
     dropWindow = null
@@ -154,8 +169,9 @@ function createDropWindow(): void {
 function showDropWindow(): void {
   if (!dropWindow || dropWindow.isDestroyed()) createDropWindow()
   if (!dropWindow) return
-  positionDropWindow(dropWindow)
-  dropWindow.showInactive()
+  positionTrayPopup(dropWindow)
+  dropWindow.show()
+  dropWindow.focus()
 }
 
 function hideDropWindow(): void {
@@ -190,15 +206,14 @@ function notify(title: string, body: string): void {
 }
 
 async function doSendFiles(): Promise<void> {
-  showDropWindow()
-  showMainWindow()
-  broadcast('open-panel', 'files')
   if (session.state.status !== 'connected') {
     broadcast('log', '请先连接对端后再传送文件')
     notify('PeerSwitch', '请先连接对端后再传送文件')
+    showMainWindow()
     return
   }
-  const res = await dialog.showOpenDialog(mainWindow!, {
+  const parent = BrowserWindow.getFocusedWindow() || mainWindow || undefined
+  const res = await dialog.showOpenDialog(parent!, {
     properties: ['openFile', 'multiSelections'],
     title: '选择要发送的文件'
   })
@@ -238,7 +253,6 @@ function buildTray(): void {
   if (tray) return
   let image = nativeImage.createFromPath(iconPath())
   if (image.isEmpty()) {
-    // 1x1 兜底，避免托盘创建失败
     image = nativeImage.createEmpty()
   }
   if (process.platform === 'darwin') {
@@ -248,63 +262,12 @@ function buildTray(): void {
   }
 
   tray = new Tray(image)
-  tray.setToolTip('PeerSwitch 后台服务')
-  const rebuildMenu = (): void => {
-    const dropVisible = Boolean(dropWindow && !dropWindow.isDestroyed() && dropWindow.isVisible())
-    const menu = Menu.buildFromTemplate([
-      {
-        label: '显示主窗口',
-        click: () => showMainWindow()
-      },
-      {
-        label: '立即切换屏幕',
-        click: () => void doSwitch()
-      },
-      {
-        label: dropVisible ? '隐藏拖放窗口' : '显示拖放窗口',
-        click: () => {
-          toggleDropWindow()
-          rebuildMenu()
-        }
-      },
-      {
-        label: '选择文件传送…',
-        click: () => void doSendFiles()
-      },
-      { type: 'separator' },
-      {
-        label: '开机自启',
-        type: 'checkbox',
-        checked: getSettings().openAtLogin,
-        click: (item) => {
-          applyOpenAtLogin(item.checked)
-          updateSettings({ openAtLogin: item.checked })
-          broadcast('settings', getSettings())
-        }
-      },
-      { type: 'separator' },
-      {
-        label: '退出 PeerSwitch',
-        click: () => {
-          isQuitting = true
-          app.quit()
-        }
-      }
-    ])
-    tray?.setContextMenu(menu)
-  }
-
-  rebuildMenu()
+  tray.setToolTip('PeerSwitch')
+  // 不用系统原生菜单：无法在菜单项里拖文件。改为自定义下拉面板。
+  tray.setContextMenu(null)
+  tray.on('click', () => toggleDropWindow())
+  tray.on('right-click', () => toggleDropWindow())
   tray.on('double-click', () => showMainWindow())
-  tray.on('click', () => {
-    // macOS：单击托盘切换右上角拖放窗；Windows 显示主窗口
-    if (process.platform === 'darwin') {
-      toggleDropWindow()
-      rebuildMenu()
-    } else {
-      showMainWindow()
-    }
-  })
 }
 
 function wireSessionEvents(): void {
@@ -410,6 +373,27 @@ function registerIpc(): void {
   ipcMain.handle('drop:show', () => showDropWindow())
   ipcMain.handle('drop:hide', () => hideDropWindow())
   ipcMain.handle('drop:toggle', () => toggleDropWindow())
+  ipcMain.handle('tray:action', async (_e, action: string) => {
+    switch (action) {
+      case 'show-main':
+        hideDropWindow()
+        showMainWindow()
+        break
+      case 'switch':
+        hideDropWindow()
+        await doSwitch()
+        break
+      case 'pick-files':
+        await doSendFiles()
+        break
+      case 'quit':
+        isQuitting = true
+        app.quit()
+        break
+      default:
+        break
+    }
+  })
 }
 
 async function bootstrapService(): Promise<void> {
@@ -458,17 +442,9 @@ app.whenReady().then(async () => {
   buildTray()
   registerHotkey()
   await bootstrapService()
-  // 菜单栏旁常驻拖放窗，方便直接拖文件上传
-  showDropWindow()
 
   app.on('activate', () => {
     showMainWindow()
-  })
-
-  screen.on('display-metrics-changed', () => {
-    if (dropWindow && !dropWindow.isDestroyed() && dropWindow.isVisible()) {
-      positionDropWindow(dropWindow)
-    }
   })
 })
 

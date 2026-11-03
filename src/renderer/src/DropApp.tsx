@@ -10,24 +10,35 @@ export default function DropApp(): JSX.Element {
   const [active, setActive] = useState(false)
   const [connected, setConnected] = useState(false)
   const [peer, setPeer] = useState('')
-  const [status, setStatus] = useState('拖入文件即可上传')
+  const [openAtLogin, setOpenAtLogin] = useState(true)
+  const [status, setStatus] = useState('把文件拖到上方区域即可上传')
 
   useEffect(() => {
-    void window.peerswitch.getState().then((s: ConnState) => {
+    void (async () => {
+      const s = await window.peerswitch.getState()
       setConnected(s.status === 'connected')
       if (s.status === 'connected') setPeer(s.peerName)
-    })
-    const off = window.peerswitch.on('conn-state', (p) => {
-      const s = p as ConnState
-      setConnected(s.status === 'connected')
-      setPeer(s.status === 'connected' ? s.peerName : '')
-    })
-    const offLog = window.peerswitch.on('log', (p) => setStatus(String(p)))
-    return () => {
-      off()
-      offLog()
-    }
+      const settings = await window.peerswitch.getSettings()
+      setOpenAtLogin(settings.openAtLogin)
+    })()
+    const offs = [
+      window.peerswitch.on('conn-state', (p) => {
+        const s = p as ConnState
+        setConnected(s.status === 'connected')
+        setPeer(s.status === 'connected' ? s.peerName : '')
+      }),
+      window.peerswitch.on('log', (p) => setStatus(String(p))),
+      window.peerswitch.on('settings', (p) => {
+        const s = p as { openAtLogin?: boolean }
+        if (typeof s.openAtLogin === 'boolean') setOpenAtLogin(s.openAtLogin)
+      })
+    ]
+    return () => offs.forEach((off) => off())
   }, [])
+
+  const run = async (action: string): Promise<void> => {
+    await window.peerswitch.trayAction(action)
+  }
 
   const sendFiles = async (fileList: FileList | null): Promise<void> => {
     if (!fileList?.length) return
@@ -52,46 +63,66 @@ export default function DropApp(): JSX.Element {
   }
 
   return (
-    <div className="shell">
-      <div className="drag-bar" />
-      <button
-        className="close"
-        title="隐藏"
-        onClick={() => void window.peerswitch.hideDropWindow()}
-      >
-        ×
-      </button>
-      <div
-        className={`panel ${active ? 'active' : ''} ${connected ? 'ready' : ''}`}
-        onDragEnter={(e) => {
-          e.preventDefault()
-          setActive(true)
-        }}
-        onDragOver={(e) => {
-          e.preventDefault()
-          setActive(true)
-        }}
-        onDragLeave={(e) => {
-          e.preventDefault()
-          setActive(false)
-        }}
-        onDrop={(e) => {
-          e.preventDefault()
-          setActive(false)
-          void sendFiles(e.dataTransfer.files)
-        }}
-        onClick={() => {
-          if (!connected) {
-            setStatus('请先连接对端')
-            void window.peerswitch.showMainWindow()
-            return
-          }
-          void window.peerswitch.pickAndSendFiles()
-        }}
-      >
-        <strong>{active ? '松开即可上传' : '拖入文件上传'}</strong>
-        <span>{connected ? `对端：${peer || '已连接'}` : '尚未连接对端'}</span>
-        <span className="hint">{status}</span>
+    <div className="menu-shell">
+      <div className="menu-card">
+        <div
+          className={`drop-area ${active ? 'active' : ''} ${connected ? 'ready' : ''}`}
+          onDragEnter={(e) => {
+            e.preventDefault()
+            setActive(true)
+          }}
+          onDragOver={(e) => {
+            e.preventDefault()
+            setActive(true)
+          }}
+          onDragLeave={(e) => {
+            e.preventDefault()
+            setActive(false)
+          }}
+          onDrop={(e) => {
+            e.preventDefault()
+            setActive(false)
+            void sendFiles(e.dataTransfer.files)
+          }}
+          onClick={() => void run('pick-files')}
+        >
+          <strong>{active ? '松开即可上传' : '拖入文件到此处上传'}</strong>
+          <span>{connected ? `对端：${peer || '已连接'}` : '尚未连接对端'}</span>
+        </div>
+
+        <div className="sep" />
+
+        <button className="item" onClick={() => void run('show-main')}>
+          显示主窗口
+        </button>
+        <button className="item" onClick={() => void run('switch')}>
+          立即切换屏幕
+        </button>
+        <button className="item" onClick={() => void run('pick-files')}>
+          选择文件传送…
+        </button>
+
+        <div className="sep" />
+
+        <button
+          className="item"
+          onClick={async () => {
+            const next = !openAtLogin
+            setOpenAtLogin(next)
+            await window.peerswitch.updateSettings({ openAtLogin: next })
+          }}
+        >
+          开机自启
+          <span className="check">{openAtLogin ? '✓' : ''}</span>
+        </button>
+
+        <div className="sep" />
+
+        <button className="item danger" onClick={() => void run('quit')}>
+          退出 PeerSwitch
+        </button>
+
+        <div className="status">{status}</div>
       </div>
     </div>
   )
