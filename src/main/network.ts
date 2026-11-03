@@ -242,35 +242,52 @@ export class PeerSession extends EventEmitter {
     }
   }
 
-  async startHost(preferCode?: string): Promise<{ code: string; port: number }> {
-    this.disconnect()
+  /** 始终保持端口监听，便于对端扫描发现（即使本机是客户端也要听） */
+  async ensureServer(preferCode?: string): Promise<{ code: string; port: number }> {
     const settings = getSettings()
     const code =
       preferCode && /^\d{6}$/.test(preferCode) ? preferCode : DEFAULT_PAIR_CODE
     this.expectedCode = code
 
+    if (this.server) {
+      return { code, port: settings.port }
+    }
+
     await new Promise<void>((resolve, reject) => {
       this.server = net.createServer((socket) => {
+        // 已有会话时也先完成握手，让端口扫描能发现本机；再立刻关掉探测连接
         if (this.socket) {
           socket.end()
           return
         }
         this.attachSocket(socket, 'host')
       })
-      this.server.once('error', reject)
+      this.server.once('error', (err) => {
+        this.server = null
+        reject(err)
+      })
       this.server.listen(settings.port, '0.0.0.0', () => resolve())
     })
 
-    updateSettings({ lastRole: 'host', lastCode: code })
-    this.setState({ status: 'hosting', code, port: settings.port })
-    this.emit('log', `主机已启动，端口 ${settings.port}（锁屏时仍保持监听）`)
     return { code, port: settings.port }
   }
 
+  async startHost(preferCode?: string): Promise<{ code: string; port: number }> {
+    this.cleanupSocket()
+    const { code, port } = await this.ensureServer(preferCode)
+    updateSettings({ lastRole: 'host', lastCode: code })
+    this.setState({ status: 'hosting', code, port })
+    this.emit('log', `主机已启动，端口 ${port}（始终监听，可被局域网扫描发现）`)
+    return { code, port }
+  }
+
   async join(host: string, code: string): Promise<void> {
-    this.disconnect()
     const settings = getSettings()
-    this.expectedCode = code
+    const pair = code && /^\d{6}$/.test(code) ? code : DEFAULT_PAIR_CODE
+    // 加入前先确保本机也在监听，否则对端扫不到 Windows
+    await this.ensureServer(pair)
+    this.cleanupSocket()
+    this.expectedCode = pair
     this.setState({ status: 'connecting' })
 
     await new Promise<void>((resolve, reject) => {
@@ -279,19 +296,44 @@ export class PeerSession extends EventEmitter {
         this.send({
           type: 'hello',
           name: settings.displayName,
-          code,
+          code: pair,
           role: 'client'
         })
         resolve()
       })
       socket.once('error', (err) => {
-        this.setState({ status: 'idle' })
+        if (this.server) {
+          this.setState({ status: 'hosting', code: this.expectedCode, port: settings.port })
+        } else {
+          this.setState({ status: 'idle' })
+        }
         reject(err)
       })
     })
   }
 
   disconnect(): void {
+    this.cleanupSocket()
+    // 默认保持端口监听，方便再次被扫描；仅完全退出时关闭服务
+    if (this.server && this.expectedCode) {
+      this.setState({
+        status: 'hosting',
+        code: this.expectedCode,
+        port: getSettings().port
+      })
+      this.emit('log', '已断开对端，本机继续监听等待配对')
+      return
+    }
+    if (this.server) {
+      this.server.close()
+      this.server = null
+    }
+    this.expectedCode = ''
+    this.setState({ status: 'idle' })
+  }
+
+  /** 应用退出时关闭全部 */
+  shutdown(): void {
     this.cleanupSocket()
     if (this.server) {
       this.server.close()
@@ -304,12 +346,24 @@ export class PeerSession extends EventEmitter {
   /** 确保后台监听仍在（解锁/唤醒后调用） */
   async ensureListening(): Promise<void> {
     const settings = getSettings()
-    if (this.state.status === 'connected' || this.state.status === 'hosting') return
-    if (settings.autoHost || settings.lastRole === 'host') {
-      await this.startHost(DEFAULT_PAIR_CODE)
-      return
+    try {
+      await this.ensureServer(DEFAULT_PAIR_CODE)
+      if (this.state.status === 'idle') {
+        this.setState({
+          status: 'hosting',
+          code: this.expectedCode || DEFAULT_PAIR_CODE,
+          port: settings.port
+        })
+      }
+    } catch (e) {
+      this.emit('log', `恢复监听失败：${e instanceof Error ? e.message : String(e)}`)
     }
-    if (settings.autoReconnect && settings.lastHost && settings.lastCode) {
+    if (
+      settings.autoReconnect &&
+      settings.lastHost &&
+      settings.lastCode &&
+      this.state.status !== 'connected'
+    ) {
       try {
         await this.join(settings.lastHost, settings.lastCode)
       } catch (e) {

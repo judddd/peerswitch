@@ -382,7 +382,10 @@ export default function App(): JSX.Element {
 
                 <div className="card">
                   <h2>加入连接</h2>
-                  <p>扫描局域网开放端口的主机，点选 IP 即可配对（配对码默认 666666）。</p>
+                  <p>
+                    扫描局域网开放 {settings.port} 端口的主机，点选 IP 即可配对（配对码默认
+                    666666）。对端需已打开 PeerSwitch；Windows 请允许防火墙专用网络入站。
+                  </p>
                   <button
                     className="btn btn-secondary"
                     disabled={busy || scanning}

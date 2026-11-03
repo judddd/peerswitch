@@ -1,11 +1,24 @@
 import net from 'net'
+import { execFile } from 'child_process'
+import { promisify } from 'util'
 import { networkInterfaces } from 'os'
 import { getSettings } from './store'
+
+const execFileAsync = promisify(execFile)
 
 export type ScanHit = {
   ip: string
   port: number
   ms: number
+}
+
+function isPrivateLan(ip: string): boolean {
+  const p = ip.split('.').map(Number)
+  if (p.length !== 4 || p.some((n) => Number.isNaN(n))) return false
+  if (p[0] === 10) return true
+  if (p[0] === 192 && p[1] === 168) return true
+  if (p[0] === 172 && p[1] >= 16 && p[1] <= 31) return true
+  return false
 }
 
 function localIPv4s(): { ip: string; prefix: string }[] {
@@ -16,10 +29,8 @@ function localIPv4s(): { ip: string; prefix: string }[] {
     for (const info of list) {
       if (info.family !== 'IPv4' && (info.family as unknown) !== 4) continue
       if (info.internal) continue
-      const parts = info.address.split('.').map(Number)
-      if (parts.length !== 4) continue
-      // 跳过链路本地 / 明显非局域网
-      if (parts[0] === 169 && parts[1] === 254) continue
+      if (!isPrivateLan(info.address)) continue
+      const parts = info.address.split('.')
       out.push({
         ip: info.address,
         prefix: `${parts[0]}.${parts[1]}.${parts[2]}`
@@ -27,6 +38,25 @@ function localIPv4s(): { ip: string; prefix: string }[] {
     }
   }
   return out
+}
+
+async function arpNeighbors(): Promise<string[]> {
+  try {
+    const { stdout } =
+      process.platform === 'win32'
+        ? await execFileAsync('arp', ['-a'], { timeout: 3000, windowsHide: true })
+        : await execFileAsync('arp', ['-a', '-n'], { timeout: 3000 })
+    const ips = new Set<string>()
+    const re = /\b(\d{1,3}(?:\.\d{1,3}){3})\b/g
+    let m: RegExpExecArray | null
+    while ((m = re.exec(stdout))) {
+      const ip = m[1]
+      if (isPrivateLan(ip) && !ip.endsWith('.255') && !ip.endsWith('.0')) ips.add(ip)
+    }
+    return [...ips]
+  } catch {
+    return []
+  }
 }
 
 function probe(ip: string, port: number, timeoutMs: number): Promise<number | null> {
@@ -54,7 +84,7 @@ async function mapPool<T, R>(
 ): Promise<R[]> {
   const results: R[] = new Array(items.length)
   let cursor = 0
-  const runners = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+  const runners = Array.from({ length: Math.min(concurrency, items.length || 1) }, async () => {
     while (cursor < items.length) {
       const i = cursor++
       results[i] = await worker(items[i])
@@ -64,7 +94,7 @@ async function mapPool<T, R>(
   return results
 }
 
-/** 扫描本机所在 /24 网段上开放 PeerSwitch 端口的主机 */
+/** 扫描本机所在私有网段上开放 PeerSwitch 端口的主机 */
 export async function scanLanPeers(
   onProgress?: (done: number, total: number) => void
 ): Promise<ScanHit[]> {
@@ -74,11 +104,24 @@ export async function scanLanPeers(
   const prefixes = [...new Set(locals.map((x) => x.prefix))]
   if (prefixes.length === 0) return []
 
+  const neighborSet = new Set((await arpNeighbors()).filter((ip) => !self.has(ip)))
   const targets: string[] = []
+  const seen = new Set<string>()
+
+  // 先扫 ARP 邻居（更快、更容易命中 Windows）
+  for (const ip of neighborSet) {
+    const prefix = ip.split('.').slice(0, 3).join('.')
+    if (!prefixes.includes(prefix)) continue
+    seen.add(ip)
+    targets.push(ip)
+  }
+
   for (const prefix of prefixes) {
     for (let i = 1; i <= 254; i++) {
       const ip = `${prefix}.${i}`
-      if (!self.has(ip)) targets.push(ip)
+      if (self.has(ip) || seen.has(ip)) continue
+      seen.add(ip)
+      targets.push(ip)
     }
   }
 
@@ -86,10 +129,12 @@ export async function scanLanPeers(
   const total = targets.length
   const hits: ScanHit[] = []
 
-  await mapPool(targets, 64, async (ip) => {
-    const ms = await probe(ip, port, 350)
+  await mapPool(targets, 48, async (ip) => {
+    // 邻居给更长超时；全网段略短
+    const timeout = neighborSet.has(ip) ? 800 : 450
+    const ms = await probe(ip, port, timeout)
     done += 1
-    if (done % 16 === 0 || done === total) onProgress?.(done, total)
+    if (done % 12 === 0 || done === total) onProgress?.(done, total)
     if (ms != null) hits.push({ ip, port, ms })
     return ms
   })

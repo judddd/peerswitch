@@ -304,12 +304,15 @@ async function bootstrapService(): Promise<void> {
   applyOpenAtLogin(settings.openAtLogin)
   await ensureDownloadDir(settings.downloadDir)
 
-  // 开机自启后默认拉起主机监听，保证对端锁屏/本机锁屏时仍能收切换指令
+  // 始终拉起端口监听：客户端加入后也对局域网可见，方便扫描发现
   try {
-    if (settings.autoHost || settings.lastRole === 'host' || !settings.lastRole) {
-      await session.startHost(DEFAULT_PAIR_CODE)
-    } else if (settings.autoReconnect && settings.lastHost && settings.lastCode) {
-      await session.join(settings.lastHost, settings.lastCode || DEFAULT_PAIR_CODE)
+    await session.startHost(DEFAULT_PAIR_CODE)
+    if (settings.autoReconnect && settings.lastHost && settings.lastCode) {
+      try {
+        await session.join(settings.lastHost, settings.lastCode || DEFAULT_PAIR_CODE)
+      } catch (e) {
+        broadcast('log', `自动重连失败：${e instanceof Error ? e.message : String(e)}`)
+      }
     }
   } catch (e) {
     broadcast('log', `后台服务启动：${e instanceof Error ? e.message : String(e)}`)
@@ -356,7 +359,7 @@ app.on('before-quit', () => {
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll()
-  session.disconnect()
+  session.shutdown()
 })
 
 app.on('window-all-closed', () => {
