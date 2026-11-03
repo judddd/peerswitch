@@ -219,11 +219,11 @@ export default function App(): JSX.Element {
   }
 
   const onSendFiles = async (): Promise<void> => {
-    setPanel('files')
     if (state.status !== 'connected') {
-      setLog('请先连接对端后再传送文件')
+      setLog('请先连接对端')
       return
     }
+    setPanel('files')
     try {
       await window.peerswitch.pickAndSendFiles()
     } catch (e) {
@@ -237,17 +237,17 @@ export default function App(): JSX.Element {
       .map((f) => (f as File & { path?: string }).path)
       .filter((p): p is string => Boolean(p))
     if (!paths.length) {
-      setLog('未能读取拖入文件的本地路径')
+      setLog('无法读取文件路径')
+      return
+    }
+    if (state.status !== 'connected') {
+      setLog('请先连接对端')
       return
     }
     setPanel('files')
-    if (state.status !== 'connected') {
-      setLog('请先连接对端后再传送文件')
-      return
-    }
     try {
       await window.peerswitch.sendFilePaths(paths)
-      setLog(`正在上传 ${paths.length} 个文件…`)
+      setLog(`正在发送 ${paths.length} 个文件…`)
     } catch (e) {
       setLog(e instanceof Error ? e.message : String(e))
     }
@@ -293,7 +293,11 @@ export default function App(): JSX.Element {
             className={`drop-zone ${dropActive ? 'active' : ''} ${connected ? 'ready' : ''} ${
               panel === 'files' ? 'open' : ''
             }`}
-            title={connected ? `传文件（${fileHotkeyLabel}）` : '传文件'}
+            title={
+              connected
+                ? `拖入或点击选择文件（${fileHotkeyLabel}）`
+                : '连接对端后可拖入文件'
+            }
             onDragEnter={(e) => {
               e.preventDefault()
               e.stopPropagation()
@@ -315,15 +319,7 @@ export default function App(): JSX.Element {
               setDropActive(false)
               void sendDroppedFiles(e.dataTransfer.files)
             }}
-            onClick={() => {
-              if (panel === 'files') {
-                void onSendFiles()
-                return
-              }
-              setPanel('files')
-              if (connected) void onSendFiles()
-              else setLog('请先连接对端后再传送文件')
-            }}
+            onClick={() => void onSendFiles()}
             role="button"
             tabIndex={0}
             onKeyDown={(e) => {
@@ -335,8 +331,8 @@ export default function App(): JSX.Element {
           >
             <IconFiles />
             <div className="drop-zone-text">
-              <strong>{dropActive ? '松开上传' : '传文件'}</strong>
-              <span>{connected ? fileHotkeyLabel : '未连接'}</span>
+              <strong>{dropActive ? '松开上传' : '拖入文件'}</strong>
+              <span>{connected ? '发送到对端' : '先连接对端'}</span>
             </div>
           </div>
 
