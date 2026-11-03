@@ -22,12 +22,24 @@ import { session } from './network'
 import { COMMON_INPUTS, ensureDownloadDir, switchMonitorInput } from './ddc'
 import { applyOpenAtLogin, isBackgroundLaunch } from './autostart'
 import { DEFAULT_PAIR_CODE, scanLanPeers } from './lan-scan'
+import { applyShellIntegration, extractSendFiles } from './shell-integration'
 
 const isDev = !app.isPackaged
 
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let isQuitting = false
+let appReady = false
+const pendingSendFiles: string[] = []
+
+const gotLock = app.requestSingleInstanceLock()
+if (!gotLock) {
+  app.quit()
+} else {
+  app.on('second-instance', (_e, argv) => {
+    void handleExternalSend(extractSendFiles(argv))
+  })
+}
 
 function iconPath(): string {
   if (process.platform === 'win32') {
@@ -107,6 +119,41 @@ function notify(title: string, body: string): void {
   }
 }
 
+async function sendFilePaths(paths: string[]): Promise<void> {
+  const list = paths.filter(Boolean)
+  if (!list.length) return
+  broadcast('open-panel', 'files')
+  if (session.state.status !== 'connected') {
+    broadcast('log', '请先连接对端后再传送文件')
+    notify('PeerSwitch', '请先连接对端后再传送文件')
+    showMainWindow()
+    return
+  }
+  let ok = 0
+  for (const p of list) {
+    try {
+      await session.sendFile(p)
+      ok += 1
+    } catch (e) {
+      broadcast('log', e instanceof Error ? e.message : String(e))
+    }
+  }
+  if (ok > 0) {
+    broadcast('log', `已发送 ${ok} 个文件`)
+    notify('PeerSwitch', `已发送 ${ok} 个文件`)
+  }
+}
+
+async function handleExternalSend(paths: string[]): Promise<void> {
+  const list = paths.filter(Boolean)
+  if (!list.length) return
+  if (!appReady) {
+    pendingSendFiles.push(...list)
+    return
+  }
+  await sendFilePaths(list)
+}
+
 async function doSendFiles(): Promise<void> {
   if (session.state.status !== 'connected') {
     broadcast('log', '请先连接对端后再传送文件')
@@ -120,13 +167,7 @@ async function doSendFiles(): Promise<void> {
     title: '选择要发送的文件'
   })
   if (res.canceled || !res.filePaths.length) return
-  for (const p of res.filePaths) {
-    try {
-      await session.sendFile(p)
-    } catch (e) {
-      broadcast('log', e instanceof Error ? e.message : String(e))
-    }
-  }
+  await sendFilePaths(res.filePaths)
 }
 
 function registerHotkey(): void {
@@ -230,10 +271,17 @@ function wireSessionEvents(): void {
 
 function registerIpc(): void {
   ipcMain.handle('settings:get', () => getSettings())
-  ipcMain.handle('settings:update', (_e, patch: Partial<PeerSwitchSettings>) => {
+  ipcMain.handle('settings:update', async (_e, patch: Partial<PeerSwitchSettings>) => {
     const next = updateSettings(patch)
     if (patch.hotkey) registerHotkey()
     if (typeof patch.openAtLogin === 'boolean') applyOpenAtLogin(patch.openAtLogin)
+    if (typeof patch.contextMenuSend === 'boolean') {
+      try {
+        await applyShellIntegration(patch.contextMenuSend)
+      } catch (e) {
+        broadcast('log', e instanceof Error ? e.message : String(e))
+      }
+    }
     return next
   })
   ipcMain.handle('inputs:common', () => COMMON_INPUTS)
@@ -315,6 +363,12 @@ async function bootstrapService(): Promise<void> {
   applyOpenAtLogin(settings.openAtLogin)
   await ensureDownloadDir(settings.downloadDir)
 
+  try {
+    await applyShellIntegration(settings.contextMenuSend)
+  } catch (e) {
+    broadcast('log', e instanceof Error ? e.message : String(e))
+  }
+
   // 始终监听 + 局域网广播发现；两边 IP 变了也能靠 pairId 自动重连
   try {
     await session.startHost(DEFAULT_PAIR_CODE)
@@ -338,6 +392,7 @@ function wirePowerEvents(): void {
 }
 
 app.whenReady().then(async () => {
+  if (!gotLock) return
   if (process.platform === 'win32') app.setAppUserModelId('app.peerswitch.desktop')
 
   Menu.setApplicationMenu(null)
@@ -348,6 +403,12 @@ app.whenReady().then(async () => {
   buildTray()
   registerHotkey()
   await bootstrapService()
+  appReady = true
+
+  const fromArgv = extractSendFiles(process.argv)
+  const queued = [...pendingSendFiles, ...fromArgv]
+  pendingSendFiles.length = 0
+  if (queued.length) void handleExternalSend(queued)
 
   app.on('activate', () => {
     showMainWindow()

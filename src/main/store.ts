@@ -18,6 +18,8 @@ export type PeerSwitchSettings = {
   /** 记住配对后自动重连（通过 pairId 局域网发现，两边 IP 可变） */
   autoReconnect: boolean
   closeToTray: boolean
+  /** Finder / 资源管理器右键「传送至对端」 */
+  contextMenuSend: boolean
   lastHost: string
   lastCode: string
   lastRole: 'host' | 'client' | ''
@@ -42,6 +44,7 @@ const defaults: PeerSwitchSettings = {
   autoHost: true,
   autoReconnect: true,
   closeToTray: true,
+  contextMenuSend: true,
   lastHost: '',
   lastCode: '666666',
   lastRole: '',

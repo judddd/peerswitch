@@ -65,7 +65,8 @@
       "entitlementsInherit": "build/entitlements.mac.plist",
       "extendInfo": {
         "LSUIElement": false,
-        "LSBackgroundOnly": false
+        "LSBackgroundOnly": false,
+        "NSAppleEventsUsageDescription": "PeerSwitch 需要响应访达快速操作以传送文件"
       },
       "icon": "resources/icon.icns"
     },

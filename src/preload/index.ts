@@ -24,6 +24,7 @@ export type PeerSwitchSettings = {
   autoHost: boolean
   autoReconnect: boolean
   closeToTray: boolean
+  contextMenuSend: boolean
   lastHost: string
   lastCode: string
   lastRole: 'host' | 'client' | ''

@@ -749,6 +749,16 @@ export default function App(): JSX.Element {
                 />
               </div>
 
+              <div className="toggle">
+                <span>右键传送至对端</span>
+                <button
+                  className={`switch ${settings.contextMenuSend ? 'on' : ''}`}
+                  onClick={() =>
+                    void saveSettings({ contextMenuSend: !settings.contextMenuSend })
+                  }
+                />
+              </div>
+
               <button
                 className="btn btn-secondary"
                 onClick={async () => {
