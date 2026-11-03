@@ -1,5 +1,5 @@
 import { app } from 'electron'
-import { execFile, spawn } from 'child_process'
+import { execFile, execFileSync, spawn } from 'child_process'
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
@@ -260,10 +260,6 @@ function finderServiceApp(): string {
   return join(app.getAppPath(), 'native/bin/PeerSwitchService.app')
 }
 
-function finderServiceBinary(): string {
-  return join(finderServiceApp(), 'Contents/MacOS/PeerSwitchService')
-}
-
 async function enablePbsContextMenu(bundleId: string, menu: string): Promise<void> {
   const key = `${bundleId} - ${menu}`
   try {
@@ -282,24 +278,23 @@ async function enablePbsContextMenu(bundleId: string, menu: string): Promise<voi
 
 function startFinderServiceHelper(): void {
   if (process.platform !== 'darwin') return
-  const bin = finderServiceBinary()
-  if (!existsSync(bin)) return
+  const helperApp = finderServiceApp()
+  if (!existsSync(helperApp)) return
   try {
-    spawn('/usr/bin/pkill', ['-x', 'PeerSwitchService'], { stdio: 'ignore' })
+    execFileSync('/usr/bin/pkill', ['-x', 'PeerSwitchService'], { stdio: 'ignore' })
   } catch {
-    /* ignore */
+    /* 没有旧进程 */
   }
-  const child = spawn(bin, [], {
+  spawn('/usr/bin/open', ['-g', helperApp], {
     detached: true,
     stdio: 'ignore',
     env: { ...process.env, PEERSWITCH_BIN: getLaunchSpec().bin }
-  })
-  child.unref()
+  }).unref()
 }
 
 export function stopFinderServiceHelper(): void {
   try {
-    spawn('/usr/bin/pkill', ['-x', 'PeerSwitchService'], { stdio: 'ignore' })
+    execFileSync('/usr/bin/pkill', ['-x', 'PeerSwitchService'], { stdio: 'ignore' })
   } catch {
     /* ignore */
   }
