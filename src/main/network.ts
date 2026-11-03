@@ -66,12 +66,18 @@ export class PeerSession extends EventEmitter {
   private reconnectAttempt = 0
   private suppressReconnect = false
   private joining = false
+  private lastAliveAt = 0
   private discovery: Discovery | null = null
   private incoming = new Map<
     string,
     { name: string; size: number; path: string; stream: ReturnType<typeof createWriteStream>; received: number }
   >()
   state: ConnState = { status: 'idle' }
+
+  /** 只有客户端才主动拨号；主机只监听，避免两边互拨把连接掐死 */
+  private shouldAutoDial(): boolean {
+    return getSettings().lastRole === 'client'
+  }
 
   private setState(s: ConnState): void {
     this.state = s
@@ -85,8 +91,16 @@ export class PeerSession extends EventEmitter {
 
   private startKeepalive(): void {
     this.stopKeepalive()
+    this.lastAliveAt = Date.now()
     this.keepalive = setInterval(() => {
-      if (this.state.status === 'connected') this.send({ type: 'ping' })
+      if (this.state.status !== 'connected') return
+      // 僵尸连接：对端已死但仍占着 socket，会导致新连接被拒
+      if (Date.now() - this.lastAliveAt > 18000) {
+        this.emit('log', '心跳超时，清理旧连接')
+        this.socket?.destroy()
+        return
+      }
+      this.send({ type: 'ping' })
     }, 5000)
   }
 
@@ -101,14 +115,17 @@ export class PeerSession extends EventEmitter {
     this.socket = socket
     this.role = role
     this.reader = new FrameReader()
+    this.lastAliveAt = Date.now()
     socket.setNoDelay(true)
     socket.setKeepAlive(true, 3000)
     this.startKeepalive()
     socket.on('data', (chunk) => {
+      this.lastAliveAt = Date.now()
       for (const msg of this.reader.push(chunk)) void this.onMessage(msg)
     })
     socket.on('close', () => {
-      const wasClient = this.role === 'client'
+      // 已被新连接顶替
+      if (this.socket !== socket) return
       this.cleanupSocket()
       if (this.server) {
         this.setState({
@@ -120,14 +137,62 @@ export class PeerSession extends EventEmitter {
         this.setState({ status: 'idle' })
       }
       this.emit('log', '对端已断开')
-      // 两边 IP 都可能变：靠 pairId 广播互相发现后再连
       const s = getSettings()
-      if (s.autoReconnect && (s.pairId || s.lastHost)) {
+      if (s.autoReconnect && this.shouldAutoDial() && (s.pairId || s.lastHost)) {
         this.scheduleReconnect('连接断开')
       }
-      void wasClient
     })
-    socket.on('error', (err) => this.emit('log', `连接错误：${err.message}`))
+    socket.on('error', (err) => {
+      if (this.socket === socket) this.emit('log', `连接错误：${err.message}`)
+    })
+  }
+
+  /** 已有会话时仍接受新 hello：配对码正确则顶替旧连接（Mac 重连不被 Win 拒掉） */
+  private acceptInbound(socket: net.Socket): void {
+    if (!this.socket || this.socket.destroyed) {
+      this.attachSocket(socket, 'host')
+      return
+    }
+
+    const reader = new FrameReader()
+    const timer = setTimeout(() => {
+      socket.removeAllListeners()
+      socket.destroy()
+    }, 5000)
+
+    const finish = (): void => {
+      clearTimeout(timer)
+    }
+
+    socket.on('data', (chunk) => {
+      for (const msg of reader.push(chunk)) {
+        if (msg.type !== 'hello') continue
+        finish()
+        if (msg.code !== this.expectedCode) {
+          try {
+            socket.write(encode({ type: 'hello-fail', reason: '配对码错误' }))
+          } catch {
+            /* ignore */
+          }
+          socket.end()
+          return
+        }
+        const old = this.socket
+        this.socket = null
+        if (old && !old.destroyed) {
+          old.removeAllListeners()
+          old.destroy()
+        }
+        this.attachSocket(socket, 'host')
+        void this.onMessage(msg)
+        return
+      }
+    })
+    socket.on('error', () => {
+      finish()
+      socket.destroy()
+    })
+    socket.on('close', () => finish())
   }
 
   private ensureDiscovery(): void {
@@ -136,7 +201,7 @@ export class PeerSession extends EventEmitter {
     this.discovery = new Discovery(settings.deviceId)
     this.discovery.on('peer', (info: { ip: string; beacon: { pairId: string; name: string; code: string } }) => {
       const s = getSettings()
-      if (!s.autoReconnect || this.suppressReconnect) return
+      if (!s.autoReconnect || this.suppressReconnect || !this.shouldAutoDial()) return
       if (!s.pairId || info.beacon.pairId !== s.pairId) return
       if (this.state.status === 'connected' || this.state.status === 'connecting' || this.joining) return
       this.emit('log', `发现 ${info.beacon.name}，正在连接…`)
@@ -170,7 +235,7 @@ export class PeerSession extends EventEmitter {
     }
   }
 
-  /** 自动重连：先试上次 IP，同时靠 UDP pairId 发现（两边 IP 都可变） */
+  /** 自动重连：仅客户端拨号；主机只广播等待接入 */
   scheduleReconnect(reason?: string): void {
     this.clearReconnectTimer()
     if (this.suppressReconnect) return
@@ -180,6 +245,11 @@ export class PeerSession extends EventEmitter {
 
     this.ensureDiscovery()
     this.discovery?.broadcast()
+
+    if (!this.shouldAutoDial()) {
+      if (reason) this.emit('log', `${reason}，等待对端连入…`)
+      return
+    }
 
     const delay = Math.min(30000, 1500 * Math.pow(1.6, this.reconnectAttempt))
     this.reconnectAttempt += 1
@@ -193,7 +263,7 @@ export class PeerSession extends EventEmitter {
 
   async tryAutoReconnect(): Promise<void> {
     const settings = getSettings()
-    if (!settings.autoReconnect) return
+    if (!settings.autoReconnect || !this.shouldAutoDial()) return
     if (this.state.status === 'connected') {
       this.reconnectAttempt = 0
       return
@@ -201,7 +271,6 @@ export class PeerSession extends EventEmitter {
     this.ensureDiscovery()
     this.discovery?.broadcast()
 
-    // 上次 IP 可能仍有效，先试；失败则继续等广播发现
     if (settings.lastHost) {
       try {
         this.emit('log', `重连 ${settings.lastHost}…`)
@@ -209,8 +278,11 @@ export class PeerSession extends EventEmitter {
         this.reconnectAttempt = 0
         this.emit('log', '已重连')
         return
-      } catch {
-        this.emit('log', '上次地址不可达，继续寻找…')
+      } catch (e) {
+        this.emit(
+          'log',
+          `重连失败：${e instanceof Error ? e.message : String(e)}，继续寻找…`
+        )
       }
     }
     this.scheduleReconnect()
@@ -247,6 +319,7 @@ export class PeerSession extends EventEmitter {
             remoteAddress: this.socket?.remoteAddress || ''
           })
           this.emit('log', `已连接：${msg.name}`)
+          this.emit('handshake-ok')
         }
         break
       }
@@ -271,10 +344,12 @@ export class PeerSession extends EventEmitter {
           remoteAddress: this.socket?.remoteAddress || ''
         })
         this.emit('log', `已连接：${msg.name}`)
+        this.emit('handshake-ok')
         break
       }
       case 'hello-fail': {
         this.emit('log', msg.reason)
+        this.emit('handshake-fail', msg.reason)
         this.disconnect(false)
         break
       }
@@ -368,12 +443,7 @@ export class PeerSession extends EventEmitter {
 
     await new Promise<void>((resolve, reject) => {
       this.server = net.createServer((socket) => {
-        // 已有会话时也先完成握手，让端口扫描能发现本机；再立刻关掉探测连接
-        if (this.socket) {
-          socket.end()
-          return
-        }
-        this.attachSocket(socket, 'host')
+        this.acceptInbound(socket)
       })
       this.server.once('error', (err) => {
         this.server = null
@@ -389,7 +459,12 @@ export class PeerSession extends EventEmitter {
   async startHost(preferCode?: string): Promise<{ code: string; port: number }> {
     this.cleanupSocket()
     const { code, port } = await this.ensureServer(preferCode)
-    updateSettings({ lastRole: 'host', lastCode: code })
+    // 后台监听不等于改身份：已记住的客户端不要被改成 host
+    const prevRole = getSettings().lastRole
+    updateSettings({
+      lastCode: code,
+      lastRole: prevRole === 'client' ? 'client' : 'host'
+    })
     this.ensureDiscovery()
     this.discovery?.broadcast()
     this.setState({ status: 'hosting', code, port })
@@ -415,6 +490,28 @@ export class PeerSession extends EventEmitter {
       this.setState({ status: 'connecting' })
 
       await new Promise<void>((resolve, reject) => {
+        let settled = false
+        const settle = (fn: () => void): void => {
+          if (settled) return
+          settled = true
+          clearTimeout(timer)
+          this.off('handshake-ok', onOk)
+          this.off('handshake-fail', onFail)
+          fn()
+        }
+        const onOk = (): void => settle(() => resolve())
+        const onFail = (reason: string): void =>
+          settle(() => reject(new Error(reason || '配对失败')))
+        const timer = setTimeout(() => {
+          settle(() => {
+            socket.destroy()
+            reject(new Error('配对超时'))
+          })
+        }, 8000)
+
+        this.once('handshake-ok', onOk)
+        this.once('handshake-fail', onFail)
+
         const socket = net.createConnection({ host, port: settings.port }, () => {
           this.attachSocket(socket, 'client')
           this.send({
@@ -424,7 +521,6 @@ export class PeerSession extends EventEmitter {
             role: 'client',
             pairId: getSettings().pairId || undefined
           })
-          resolve()
         })
         socket.once('error', (err) => {
           if (this.server) {
@@ -432,7 +528,12 @@ export class PeerSession extends EventEmitter {
           } else {
             this.setState({ status: 'idle' })
           }
-          reject(err)
+          settle(() => reject(err))
+        })
+        socket.once('close', () => {
+          if (!settled && this.state.status !== 'connected') {
+            settle(() => reject(new Error('连接被对端关闭')))
+          }
         })
       })
     } finally {
@@ -499,6 +600,7 @@ export class PeerSession extends EventEmitter {
     }
     if (
       settings.autoReconnect &&
+      this.shouldAutoDial() &&
       (settings.lastHost || settings.pairId) &&
       this.state.status !== 'connected'
     ) {
