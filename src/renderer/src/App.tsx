@@ -10,6 +10,7 @@ type Transfer = {
   size: number
   direction: 'in' | 'out'
   done?: boolean
+  cancelled?: boolean
   finishedAt?: number
 }
 
@@ -103,14 +104,24 @@ export default function App(): JSX.Element {
         })
       }),
       window.peerswitch.on('file-done', (p) => {
-        const t = p as Transfer
+        const t = p as { id: string; name?: string }
         setTransfers((prev) =>
           prev.map((x) =>
             x.id === t.id
-              ? { ...x, done: true, received: x.size, finishedAt: Date.now() }
+              ? { ...x, done: true, cancelled: false, received: x.size, finishedAt: Date.now() }
               : x
           )
         )
+        if (t.name) setLog(`传送完成：${t.name}`)
+      }),
+      window.peerswitch.on('file-cancelled', (p) => {
+        const t = p as { id: string; name?: string }
+        setTransfers((prev) =>
+          prev.map((x) =>
+            x.id === t.id ? { ...x, cancelled: true, finishedAt: Date.now() } : x
+          )
+        )
+        if (t.name) setLog(`已取消：${t.name}`)
       }),
       window.peerswitch.on('file-offer', (p) => {
         setPendingOffer(p as { id: string; name: string; size: number })
@@ -126,16 +137,13 @@ export default function App(): JSX.Element {
     return () => offs.forEach((off) => off())
   }, [])
 
-  // 完成后约 3 秒自动移除，避免一直占着列表
-  useEffect(() => {
-    const timer = setInterval(() => {
-      const now = Date.now()
-      setTransfers((prev) =>
-        prev.filter((t) => !t.done || !t.finishedAt || now - t.finishedAt < 3000)
-      )
-    }, 500)
-    return () => clearInterval(timer)
-  }, [])
+  const removeTransfer = (id: string): void => {
+    setTransfers((prev) => prev.filter((t) => t.id !== id))
+  }
+
+  const clearFinishedTransfers = (): void => {
+    setTransfers((prev) => prev.filter((t) => !t.done && !t.cancelled))
+  }
 
   const fileHotkeyLabel =
     typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform)
@@ -490,22 +498,85 @@ export default function App(): JSX.Element {
                   </div>
                 ) : null}
                 {transfers.length > 0 ? (
-                  <div className="transfer-list" style={{ marginTop: 12 }}>
-                    {transfers.slice(0, 4).map((t) => {
-                      const pct = t.size
-                        ? Math.min(100, Math.round((t.received / t.size) * 100))
-                        : 0
-                      return (
-                        <div className="transfer-item" key={t.id}>
-                          <div className="name">
-                            {t.direction === 'out' ? '↑' : '↓'} {t.name}
+                  <div className="transfer-panel" style={{ marginTop: 12 }}>
+                    <div className="transfer-panel-head">
+                      <span>传输记录</span>
+                      <button
+                        type="button"
+                        className="link-btn"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          clearFinishedTransfers()
+                        }}
+                      >
+                        清除已完成
+                      </button>
+                    </div>
+                    <div className="transfer-list">
+                      {transfers.map((t) => {
+                        const pct = t.size
+                          ? Math.min(100, Math.round((t.received / t.size) * 100))
+                          : 0
+                        const active = !t.done && !t.cancelled
+                        return (
+                          <div
+                            className={`transfer-item ${t.cancelled ? 'cancelled' : ''} ${
+                              t.done ? 'done' : ''
+                            }`}
+                            key={t.id}
+                          >
+                            <div className="name-row">
+                              <div className="name">
+                                {t.direction === 'out' ? '↑' : '↓'} {t.name}
+                              </div>
+                              <div className="transfer-actions">
+                                {active ? (
+                                  <button
+                                    type="button"
+                                    className="link-btn danger"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      void window.peerswitch.cancelFile(t.id)
+                                    }}
+                                  >
+                                    取消
+                                  </button>
+                                ) : null}
+                                <button
+                                  type="button"
+                                  className="link-btn"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    removeTransfer(t.id)
+                                  }}
+                                >
+                                  删除
+                                </button>
+                              </div>
+                            </div>
+                            <div className="bar">
+                              <i
+                                style={{
+                                  width: `${t.done ? 100 : t.cancelled ? pct : pct}%`
+                                }}
+                              />
+                            </div>
+                            <div className="meta-row">
+                              <span>
+                                {formatBytes(t.received)} / {formatBytes(t.size)}
+                              </span>
+                              <span>
+                                {t.cancelled
+                                  ? '已取消'
+                                  : t.done
+                                    ? '完成'
+                                    : `${pct}%`}
+                              </span>
+                            </div>
                           </div>
-                          <div className="bar">
-                            <i style={{ width: `${t.done ? 100 : pct}%` }} />
-                          </div>
-                        </div>
-                      )
-                    })}
+                        )
+                      })}
+                    </div>
                   </div>
                 ) : null}
                 <button

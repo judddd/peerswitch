@@ -59,6 +59,7 @@ const api = {
   acceptFile: (id: string, name: string, size: number): Promise<void> =>
     ipcRenderer.invoke('file:accept', id, name, size),
   rejectFile: (id: string): Promise<void> => ipcRenderer.invoke('file:reject', id),
+  cancelFile: (id: string): Promise<void> => ipcRenderer.invoke('file:cancel', id),
   openDownloadDir: (): Promise<void> => ipcRenderer.invoke('file:open-download-dir'),
 
   showMainWindow: (): Promise<void> => ipcRenderer.invoke('window:show'),

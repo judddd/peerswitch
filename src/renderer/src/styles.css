@@ -643,8 +643,24 @@ h1 {
   font-size: 13px;
 }
 
+.transfer-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+
+.transfer-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-secondary);
+}
+
 .transfer-list {
-  flex: 1;
+  max-height: 220px;
   overflow: auto;
   display: flex;
   flex-direction: column;
@@ -658,11 +674,51 @@ h1 {
   border: 1px solid var(--line);
 }
 
+.transfer-item.done {
+  border-color: rgba(52, 199, 89, 0.35);
+}
+
+.transfer-item.cancelled {
+  opacity: 0.72;
+}
+
+.transfer-item .name-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
 .transfer-item .name {
   font-size: 13px;
   font-weight: 600;
-  margin-bottom: 6px;
   word-break: break-all;
+  flex: 1;
+}
+
+.transfer-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.link-btn {
+  border: none;
+  background: transparent;
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}
+
+.link-btn.danger {
+  color: var(--red);
+}
+
+.link-btn:hover {
+  opacity: 0.8;
 }
 
 .bar {
@@ -677,6 +733,11 @@ h1 {
   height: 100%;
   background: linear-gradient(90deg, #5ac8fa, #0071e3);
   border-radius: inherit;
+  transition: width 0.15s ease;
+}
+
+.transfer-item.cancelled .bar > i {
+  background: rgba(0, 0, 0, 0.25);
 }
 
 .meta-row {

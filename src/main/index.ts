@@ -142,10 +142,11 @@ async function sendFilePaths(paths: string[]): Promise<void> {
       await session.sendFile(p)
       ok += 1
     } catch (e) {
-      broadcast('log', e instanceof Error ? e.message : String(e))
+      const msg = e instanceof Error ? e.message : String(e)
+      if (msg !== '已取消') broadcast('log', msg)
     }
   }
-  if (ok > 0) {
+  if (ok > 1) {
     broadcast('log', `已发送 ${ok} 个文件`)
     notify('PeerSwitch', `已发送 ${ok} 个文件`)
   }
@@ -266,7 +267,13 @@ function wireSessionEvents(): void {
   session.on('log', (line) => broadcast('log', line))
   session.on('switch-result', (r) => broadcast('switch-result', r))
   session.on('file-progress', (p) => broadcast('file-progress', p))
-  session.on('file-done', (p) => broadcast('file-done', p))
+  session.on('file-done', (p) => {
+    broadcast('file-done', p)
+    const name = (p as { name?: string }).name || '文件'
+    notify('PeerSwitch', `传送完成：${name}`)
+    broadcast('log', `传送完成：${name}`)
+  })
+  session.on('file-cancelled', (p) => broadcast('file-cancelled', p))
   session.on('file-offer', (p) => broadcast('file-offer', p))
 }
 
@@ -350,6 +357,9 @@ function registerIpc(): void {
     await session.acceptFile(id, name, size)
   })
   ipcMain.handle('file:reject', (_e, id: string) => session.rejectFile(id))
+  ipcMain.handle('file:cancel', (_e, id: string) => {
+    session.cancelFile(id)
+  })
   ipcMain.handle('file:open-download-dir', async () => {
     const dir = getSettings().downloadDir
     await shell.openPath(dir)

@@ -1,6 +1,12 @@
 import net from 'net'
 import { EventEmitter } from 'events'
-import { createWriteStream, createReadStream, existsSync, statSync } from 'fs'
+import {
+  createWriteStream,
+  createReadStream,
+  existsSync,
+  statSync,
+  unlinkSync
+} from 'fs'
 import { basename, join } from 'path'
 import { randomBytes } from 'crypto'
 import { getSettings, rememberPairing, updateSettings } from './store'
@@ -25,6 +31,7 @@ type WireMsg =
   | { type: 'file-reject'; id: string }
   | { type: 'file-chunk'; id: string; data: string; seq: number }
   | { type: 'file-end'; id: string }
+  | { type: 'file-cancel'; id: string }
   | { type: 'ping' }
   | { type: 'pong' }
 
@@ -67,6 +74,7 @@ export class PeerSession extends EventEmitter {
   private suppressReconnect = false
   private joining = false
   private lastAliveAt = 0
+  private cancelled = new Set<string>()
   private discovery: Discovery | null = null
   private incoming = new Map<
     string,
@@ -383,6 +391,13 @@ export class PeerSession extends EventEmitter {
       }
       case 'file-offer': {
         const settings = getSettings()
+        this.emit('file-progress', {
+          id: msg.id,
+          name: msg.name,
+          received: 0,
+          size: msg.size,
+          direction: 'in' as const
+        })
         if (!settings.autoAcceptFiles) {
           this.emit('file-offer', msg)
           return
@@ -399,6 +414,7 @@ export class PeerSession extends EventEmitter {
         break
       }
       case 'file-chunk': {
+        if (this.cancelled.has(msg.id)) return
         const rec = this.incoming.get(msg.id)
         if (!rec) return
         const buf = Buffer.from(msg.data, 'base64')
@@ -414,12 +430,20 @@ export class PeerSession extends EventEmitter {
         break
       }
       case 'file-end': {
+        if (this.cancelled.has(msg.id)) {
+          this.cancelled.delete(msg.id)
+          return
+        }
         const rec = this.incoming.get(msg.id)
         if (!rec) return
         rec.stream.end()
         this.incoming.delete(msg.id)
         this.emit('file-done', { id: msg.id, name: rec.name, path: rec.path, direction: 'in' as const })
         this.emit('log', `已接收文件：${rec.name}`)
+        break
+      }
+      case 'file-cancel': {
+        this.applyCancel(msg.id, false)
         break
       }
       case 'ping':
@@ -673,11 +697,51 @@ export class PeerSession extends EventEmitter {
     const path = join(settings.downloadDir, safe)
     const stream = createWriteStream(path)
     this.incoming.set(id, { name: safe, size, path, stream, received: 0 })
+    this.emit('file-progress', {
+      id,
+      name: safe,
+      received: 0,
+      size,
+      direction: 'in' as const
+    })
     this.send({ type: 'file-accept', id })
   }
 
   rejectFile(id: string): void {
     this.send({ type: 'file-reject', id })
+  }
+
+  /** 取消进行中的传送（本端发起，并通知对端） */
+  cancelFile(id: string): void {
+    this.applyCancel(id, true)
+  }
+
+  private applyCancel(id: string, notifyPeer: boolean): void {
+    this.cancelled.add(id)
+    this.emit('transfer-cancel', id)
+    const rec = this.incoming.get(id)
+    let name = rec?.name || id
+    if (rec) {
+      name = rec.name
+      try {
+        rec.stream.destroy()
+      } catch {
+        /* ignore */
+      }
+      this.incoming.delete(id)
+      try {
+        if (existsSync(rec.path)) unlinkSync(rec.path)
+      } catch {
+        /* ignore */
+      }
+    }
+    if (notifyPeer) this.send({ type: 'file-cancel', id })
+    this.emit('file-cancelled', {
+      id,
+      name,
+      direction: rec ? ('in' as const) : ('out' as const)
+    })
+    this.emit('log', `已取消传送：${name}`)
   }
 
   async sendFile(filePath: string): Promise<string> {
@@ -688,7 +752,15 @@ export class PeerSession extends EventEmitter {
     const size = statSync(filePath).size
     const name = basename(filePath)
     const id = randomBytes(8).toString('hex')
+    this.cancelled.delete(id)
 
+    this.emit('file-progress', {
+      id,
+      name,
+      received: 0,
+      size,
+      direction: 'out' as const
+    })
     this.send({ type: 'file-offer', id, name, size })
 
     await new Promise<void>((resolve, reject) => {
@@ -702,6 +774,11 @@ export class PeerSession extends EventEmitter {
         cleanup()
         reject(new Error('对端拒绝接收文件'))
       }
+      const onCancel = (cid: string): void => {
+        if (cid !== id) return
+        cleanup()
+        reject(new Error('已取消'))
+      }
       const timer = setTimeout(() => {
         cleanup()
         reject(new Error('等待对端接受超时'))
@@ -710,27 +787,48 @@ export class PeerSession extends EventEmitter {
         clearTimeout(timer)
         this.off('file-accepted', onAccept)
         this.off('file-rejected', onReject)
+        this.off('transfer-cancel', onCancel)
       }
       this.on('file-accepted', onAccept)
       this.on('file-rejected', onReject)
+      this.on('transfer-cancel', onCancel)
     })
+
+    if (this.cancelled.has(id)) {
+      this.cancelled.delete(id)
+      throw new Error('已取消')
+    }
 
     const stream = createReadStream(filePath, { highWaterMark: 64 * 1024 })
     let seq = 0
     let sent = 0
-    for await (const chunk of stream) {
-      const buf = chunk as Buffer
-      this.send({ type: 'file-chunk', id, data: buf.toString('base64'), seq })
-      seq += 1
-      sent += buf.length
-      this.emit('file-progress', {
-        id,
-        name,
-        received: sent,
-        size,
-        direction: 'out' as const
-      })
-      await new Promise((r) => setImmediate(r))
+    try {
+      for await (const chunk of stream) {
+        if (this.cancelled.has(id)) {
+          stream.destroy()
+          this.cancelled.delete(id)
+          throw new Error('已取消')
+        }
+        const buf = chunk as Buffer
+        this.send({ type: 'file-chunk', id, data: buf.toString('base64'), seq })
+        seq += 1
+        sent += buf.length
+        this.emit('file-progress', {
+          id,
+          name,
+          received: sent,
+          size,
+          direction: 'out' as const
+        })
+        await new Promise((r) => setImmediate(r))
+      }
+    } catch (e) {
+      if (e instanceof Error && e.message === '已取消') throw e
+      throw e
+    }
+    if (this.cancelled.has(id)) {
+      this.cancelled.delete(id)
+      throw new Error('已取消')
     }
     this.send({ type: 'file-end', id })
     this.emit('file-done', { id, name, path: filePath, direction: 'out' as const })
