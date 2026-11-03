@@ -319,13 +319,8 @@ async function bootstrapService(): Promise<void> {
   try {
     await session.startHost(DEFAULT_PAIR_CODE)
     if (settings.autoReconnect && (settings.pairId || settings.lastHost)) {
-      broadcast(
-        'log',
-        settings.pairId
-          ? `已记住配对，正在通过局域网广播寻找对端…`
-          : `已记住主机 ${settings.lastHost}，开始自动配对…`
-      )
-      session.scheduleReconnect('开机启动')
+      broadcast('log', '正在寻找对端…')
+      session.scheduleReconnect('启动')
     }
   } catch (e) {
     broadcast('log', `后台服务启动：${e instanceof Error ? e.message : String(e)}`)
@@ -337,16 +332,9 @@ function wirePowerEvents(): void {
   const resume = (): void => {
     registerHotkey()
     void session.ensureListening()
-    broadcast('log', '系统已解锁/唤醒，后台切换服务已恢复')
   }
   powerMonitor.on('unlock-screen', resume)
   powerMonitor.on('resume', resume)
-  powerMonitor.on('lock-screen', () => {
-    broadcast('log', '检测到锁屏：后台服务继续监听切换指令')
-  })
-  powerMonitor.on('suspend', () => {
-    broadcast('log', '系统即将睡眠')
-  })
 }
 
 app.whenReady().then(async () => {

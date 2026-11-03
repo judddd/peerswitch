@@ -176,7 +176,7 @@ export default function App(): JSX.Element {
     const target = (ip || hostIp).trim()
     const code = (joinCode.trim() || '666666').replace(/\D/g, '').slice(0, 6) || '666666'
     if (!target) {
-      setLog('请选择或填写主机 IP')
+      setLog('请填写主机 IP')
       return
     }
     setBusy(true)
@@ -193,19 +193,13 @@ export default function App(): JSX.Element {
 
   const onScanLan = async (): Promise<void> => {
     setScanning(true)
-    setScanProgress('开始扫描局域网…')
+    setScanProgress('扫描中…')
     setLanHits([])
     try {
       const hits = await window.peerswitch.scanLan()
       setLanHits(hits)
-      setScanProgress(
-        hits.length ? `发现 ${hits.length} 台开放 ${settings?.port || 37890} 端口的设备` : '未发现可用主机'
-      )
-      setLog(
-        hits.length
-          ? `扫描完成，可点击下方 IP 直接配对`
-          : `未扫到开放端口的主机，请确认对端已创建连接且在同一网段`
-      )
+      setScanProgress(hits.length ? `发现 ${hits.length} 台` : '未发现主机')
+      setLog(hits.length ? `发现 ${hits.length} 台` : '未发现主机')
     } catch (e) {
       setScanProgress('')
       setLog(e instanceof Error ? e.message : String(e))
@@ -299,11 +293,7 @@ export default function App(): JSX.Element {
             className={`drop-zone ${dropActive ? 'active' : ''} ${connected ? 'ready' : ''} ${
               panel === 'files' ? 'open' : ''
             }`}
-            title={
-              connected
-                ? `拖入文件即可上传（也可点击选择，${fileHotkeyLabel}）`
-                : '连接对端后，拖入文件即可上传'
-            }
+            title={connected ? `传文件（${fileHotkeyLabel}）` : '传文件'}
             onDragEnter={(e) => {
               e.preventDefault()
               e.stopPropagation()
@@ -345,8 +335,8 @@ export default function App(): JSX.Element {
           >
             <IconFiles />
             <div className="drop-zone-text">
-              <strong>{dropActive ? '松开上传' : '拖入文件'}</strong>
-              <span>{connected ? '自动发送到对端' : '先连接对端'}</span>
+              <strong>{dropActive ? '松开上传' : '传文件'}</strong>
+              <span>{connected ? fileHotkeyLabel : '未连接'}</span>
             </div>
           </div>
 
@@ -364,16 +354,12 @@ export default function App(): JSX.Element {
         <div className="panel-shell">
           {!connected ? (
             <div className="hero">
-              <div className="eyebrow">屏幕切换</div>
-              <h1>一台显示器，两台电脑。</h1>
-              <p className="sub">
-                局域网配对后，一键或快捷键切换显示器信号源。画面原生直出，不压缩、不串流。后台服务开机自启，对端锁屏/屏保时也能切过去。
-              </p>
+              <div className="eyebrow">PeerSwitch</div>
+              <h1>一台显示器，两台电脑</h1>
 
               <div className="card-row">
                 <div className="card">
                   <h2>创建连接</h2>
-                  <p>本机作为主机。默认配对码固定为 666666。</p>
                   <button className="btn btn-primary" disabled={busy} onClick={() => void onCreate()}>
                     创建连接
                   </button>
@@ -382,17 +368,15 @@ export default function App(): JSX.Element {
 
                 <div className="card">
                   <h2>加入连接</h2>
-                  <p>
-                    扫描或填写主机 IP。配对成功后双方会记住配对身份，以后哪怕两边 IP
-                    都变了，也会在局域网里自动找到对方。配对码默认 666666。
-                  </p>
                   {settings.pairId || settings.lastHost ? (
                     <div className="status-bar" style={{ marginBottom: 12 }}>
                       <div>
                         <span className="dot wait" />
-                        {settings.pairId
-                          ? `已记住配对${settings.lastPeerName ? `（${settings.lastPeerName}）` : ''}，广播发现中…`
-                          : `已记住 ${settings.lastHost}，正在自动重连…`}
+                        {settings.lastPeerName
+                          ? `正在连接 ${settings.lastPeerName}…`
+                          : settings.lastHost
+                            ? `正在重连 ${settings.lastHost}…`
+                            : '正在寻找对端…'}
                       </div>
                       {settings.lastHost ? (
                         <button
@@ -421,10 +405,10 @@ export default function App(): JSX.Element {
                           className={`lan-hit ${hostIp === h.ip ? 'selected' : ''}`}
                           disabled={busy}
                           onClick={() => void onJoin(h.ip)}
-                          title={`延迟约 ${h.ms} ms，点击加入`}
+                          title={`${h.ms} ms`}
                         >
                           <strong>{h.ip}</strong>
-                          <span>{h.ms} ms · 点击配对</span>
+                          <span>{h.ms} ms</span>
                         </button>
                       ))}
                     </div>
@@ -435,10 +419,10 @@ export default function App(): JSX.Element {
                     </p>
                   )}
                   <div className="field">
-                    <label>主机 IP（也可手动填写）</label>
+                    <label>主机 IP</label>
                     <input
                       value={hostIp}
-                      placeholder="192.168.3.231"
+                      placeholder="192.168.x.x"
                       onChange={(e) => setHostIp(e.target.value)}
                     />
                   </div>
@@ -483,12 +467,8 @@ export default function App(): JSX.Element {
             </div>
           ) : (
             <div className="hero connected-hero">
-              <div className="eyebrow">已就绪</div>
+              <div className="eyebrow">已连接</div>
               <h1>切换到 {state.peerName}</h1>
-              <p className="sub" style={{ margin: '12px auto 0' }}>
-                PeerSwitch 通过 DDC/CI 告诉显示器切换输入口。请把两台电脑分别接到不同的 HDMI /
-                DisplayPort / USB-C 接口。
-              </p>
 
               <button className="switch-orb" onClick={() => void onSwitch()} disabled={busy}>
                 <IconSwitch />
@@ -497,9 +477,9 @@ export default function App(): JSX.Element {
               </button>
 
               <p className="hotkey-hint">
-                切换 <kbd>{formatHotkey(settings.hotkey)}</kbd>
+                <kbd>{formatHotkey(settings.hotkey)}</kbd>
                 {' · '}
-                传文件 <kbd>{fileHotkeyLabel}</kbd>
+                <kbd>{fileHotkeyLabel}</kbd>
               </p>
 
               <div className="status-bar" style={{ maxWidth: 520, margin: '28px auto 0' }}>
@@ -520,7 +500,7 @@ export default function App(): JSX.Element {
                     const next = await window.peerswitch.forgetPairing()
                     setSettings(next)
                     setHostIp('')
-                    setLog('已忘记配对，下次需重新选择主机')
+                    setLog('已清除配对')
                   }}
                 >
                   断开并忘记
@@ -539,11 +519,7 @@ export default function App(): JSX.Element {
                 ✕
               </button>
             </div>
-            <p className="muted">
-              {connected
-                ? '选择文件发送到对端，或把文件拖到下方区域。'
-                : '尚未连接对端，连接成功后即可传送文件。'}
-            </p>
+            <p className="muted">{connected ? '选择或拖入文件发送' : '未连接'}</p>
             <button
               className="btn btn-primary"
               disabled={!connected}
@@ -641,11 +617,10 @@ export default function App(): JSX.Element {
         {panel === 'settings' && (
           <aside className="side-drawer">
             <h2>设置</h2>
-            <p className="muted">输入源、快捷键与开机自启后台服务。</p>
 
             <div className="settings-grid">
               <div className="field">
-                <label>本机显示名称</label>
+                <label>本机名称</label>
                 <input
                   value={settings.displayName}
                   onChange={(e) => setSettings({ ...settings, displayName: e.target.value })}
@@ -664,7 +639,7 @@ export default function App(): JSX.Element {
               </div>
 
               <div className="field">
-                <label>本机对应的显示器输入口</label>
+                <label>本机输入口</label>
                 <select
                   value={settings.localInput}
                   onChange={(e) => {
@@ -682,7 +657,7 @@ export default function App(): JSX.Element {
               </div>
 
               <div className="field">
-                <label>对端对应的显示器输入口</label>
+                <label>对端输入口</label>
                 <select
                   value={settings.peerInput}
                   onChange={(e) => {
@@ -712,7 +687,7 @@ export default function App(): JSX.Element {
               </div>
 
               <div className="toggle">
-                <span>开机自动启动后台服务</span>
+                <span>开机自启</span>
                 <button
                   className={`switch ${settings.openAtLogin ? 'on' : ''}`}
                   onClick={() => void saveSettings({ openAtLogin: !settings.openAtLogin })}
@@ -720,7 +695,7 @@ export default function App(): JSX.Element {
               </div>
 
               <div className="toggle">
-                <span>启动后自动创建主机监听</span>
+                <span>启动后自动监听</span>
                 <button
                   className={`switch ${settings.autoHost ? 'on' : ''}`}
                   onClick={() => void saveSettings({ autoHost: !settings.autoHost })}
@@ -728,22 +703,12 @@ export default function App(): JSX.Element {
               </div>
 
               <div className="toggle">
-                <span>记住配对并自动重连</span>
+                <span>自动重连</span>
                 <button
                   className={`switch ${settings.autoReconnect ? 'on' : ''}`}
                   onClick={() => void saveSettings({ autoReconnect: !settings.autoReconnect })}
                 />
               </div>
-              {settings.pairId || settings.lastHost ? (
-                <p className="muted" style={{ margin: '4px 0 10px' }}>
-                  {settings.pairId
-                    ? `配对 ID：${settings.pairId.slice(0, 8)}…（局域网广播发现）`
-                    : ''}
-                  {settings.lastHost ? ` 最近地址 ${settings.lastHost}` : ''}
-                  {settings.lastPeerName ? ` · ${settings.lastPeerName}` : ''}
-                  。两边 IP 漂移后也会自动重连。
-                </p>
-              ) : null}
               {settings.pairId || settings.lastHost ? (
                 <button
                   className="btn btn-secondary"
@@ -751,15 +716,15 @@ export default function App(): JSX.Element {
                     const next = await window.peerswitch.forgetPairing()
                     setSettings(next)
                     setHostIp('')
-                    setLog('已清除配对记忆')
+                    setLog('已清除配对')
                   }}
                 >
-                  清除配对记忆
+                  清除配对
                 </button>
               ) : null}
 
               <div className="toggle">
-                <span>关闭窗口时留在托盘</span>
+                <span>关闭后留在托盘</span>
                 <button
                   className={`switch ${settings.closeToTray ? 'on' : ''}`}
                   onClick={() => void saveSettings({ closeToTray: !settings.closeToTray })}
@@ -767,7 +732,7 @@ export default function App(): JSX.Element {
               </div>
 
               <div className="toggle">
-                <span>切换时改显示器输入源</span>
+                <span>切换时改输入源</span>
                 <button
                   className={`switch ${settings.swapMonitorOnSwitch ? 'on' : ''}`}
                   onClick={() =>
@@ -791,7 +756,7 @@ export default function App(): JSX.Element {
                   setLog(r.detail)
                 }}
               >
-                测试 DDC → 对端输入口
+                测试切换
               </button>
             </div>
           </aside>

@@ -139,7 +139,7 @@ export class PeerSession extends EventEmitter {
       if (!s.autoReconnect || this.suppressReconnect) return
       if (!s.pairId || info.beacon.pairId !== s.pairId) return
       if (this.state.status === 'connected' || this.state.status === 'connecting' || this.joining) return
-      this.emit('log', `发现已配对设备 ${info.beacon.name} @ ${info.ip}，正在自动连接…`)
+      this.emit('log', `发现 ${info.beacon.name}，正在连接…`)
       void this.join(info.ip, info.beacon.code || s.lastCode || DEFAULT_PAIR_CODE)
         .then(() => {
           this.reconnectAttempt = 0
@@ -183,12 +183,8 @@ export class PeerSession extends EventEmitter {
 
     const delay = Math.min(30000, 1500 * Math.pow(1.6, this.reconnectAttempt))
     this.reconnectAttempt += 1
-    const target = settings.lastHost || '局域网已配对设备'
     if (reason) {
-      this.emit(
-        'log',
-        `${reason}，${Math.round(delay / 1000)} 秒后尝试重连（${target} / 广播发现）…`
-      )
+      this.emit('log', `${reason}，${Math.round(delay / 1000)} 秒后重连…`)
     }
     this.reconnectTimer = setTimeout(() => {
       void this.tryAutoReconnect()
@@ -208,13 +204,13 @@ export class PeerSession extends EventEmitter {
     // 上次 IP 可能仍有效，先试；失败则继续等广播发现
     if (settings.lastHost) {
       try {
-        this.emit('log', `正在尝试上次地址 ${settings.lastHost}…`)
+        this.emit('log', `重连 ${settings.lastHost}…`)
         await this.join(settings.lastHost, settings.lastCode || DEFAULT_PAIR_CODE)
         this.reconnectAttempt = 0
-        this.emit('log', `已自动恢复配对`)
+        this.emit('log', '已重连')
         return
       } catch {
-        this.emit('log', `上次地址不可达，继续通过局域网广播寻找对端…`)
+        this.emit('log', '上次地址不可达，继续寻找…')
       }
     }
     this.scheduleReconnect()
@@ -250,7 +246,7 @@ export class PeerSession extends EventEmitter {
             role: 'host',
             remoteAddress: this.socket?.remoteAddress || ''
           })
-          this.emit('log', `已连接：${msg.name}（已建立配对 ID，IP 变化后可自动发现）`)
+          this.emit('log', `已连接：${msg.name}`)
         }
         break
       }
@@ -274,10 +270,7 @@ export class PeerSession extends EventEmitter {
           role: 'client',
           remoteAddress: this.socket?.remoteAddress || ''
         })
-        this.emit(
-          'log',
-          `已连接：${msg.name}（已记住配对，双方 IP 变化后也会自动重连）`
-        )
+        this.emit('log', `已连接：${msg.name}`)
         break
       }
       case 'hello-fail': {
@@ -400,7 +393,7 @@ export class PeerSession extends EventEmitter {
     this.ensureDiscovery()
     this.discovery?.broadcast()
     this.setState({ status: 'hosting', code, port })
-    this.emit('log', `主机已启动，端口 ${port}（广播发现已开启，IP 变化可自动重配）`)
+    this.emit('log', `主机已启动 · ${port}`)
     return { code, port }
   }
 
@@ -461,12 +454,7 @@ export class PeerSession extends EventEmitter {
         code: this.expectedCode,
         port: getSettings().port
       })
-      this.emit(
-        'log',
-        forget
-          ? '已断开并忘记配对'
-          : '已断开对端，仍记住配对，将自动重连'
-      )
+      this.emit('log', forget ? '已断开并清除配对' : '已断开')
       if (!forget) this.scheduleReconnect()
       return
     }
@@ -537,14 +525,14 @@ export class PeerSession extends EventEmitter {
      */
     const local = await switchMonitorInput(settings.peerInput)
     if (local.ok) {
-      this.emit('log', `本机已切换到对端输入源 ${settings.peerInput}（未请求对端，防止回切）`)
+      this.emit('log', `已切换到 ${settings.peerInput}`)
       return {
         ok: true,
         detail: `已切换到对端信号源（${settings.peerInput}）`
       }
     }
 
-    this.emit('log', `本机 DDC 未生效（${local.detail}），改请对端切到本机输入源 ${settings.localInput}`)
+    this.emit('log', `本机未切成功，请求对端切换…`)
     this.send({
       type: 'switch',
       peerInput: settings.localInput,
