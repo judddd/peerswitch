@@ -16,13 +16,15 @@ export type PeerSwitchSettings = {
   openAtLogin: boolean
   /** 启动后自动创建主机会话，常驻监听切换指令 */
   autoHost: boolean
-  /** 启动后尝试按上次信息自动加入 */
+  /** 记住配对后自动重连（Windows IP 变化也不影响：由 Windows 主动连固定 Mac） */
   autoReconnect: boolean
   /** 关闭窗口时隐藏到托盘，不退出后台服务 */
   closeToTray: boolean
   lastHost: string
   lastCode: string
   lastRole: 'host' | 'client' | ''
+  /** 用户主动点「断开并忘记」前，配对信息会一直保留 */
+  pairRemembered: boolean
 }
 
 const defaults: PeerSwitchSettings = {
@@ -36,11 +38,12 @@ const defaults: PeerSwitchSettings = {
   swapMonitorOnSwitch: true,
   openAtLogin: true,
   autoHost: true,
-  autoReconnect: false,
+  autoReconnect: true,
   closeToTray: true,
   lastHost: '',
   lastCode: '666666',
-  lastRole: ''
+  lastRole: '',
+  pairRemembered: false
 }
 
 export const store = new Store<PeerSwitchSettings>({
@@ -64,6 +67,13 @@ export function getSettings(): PeerSwitchSettings {
   if (!s.lastCode || !/^\d{6}$/.test(s.lastCode)) {
     s.lastCode = '666666'
   }
+  // 旧版默认关闭自动重连 → 升级后默认打开
+  if (!store.get('__reconnect_v2')) {
+    store.set('autoReconnect', true)
+    store.set('__reconnect_v2', true)
+    s.autoReconnect = true
+  }
+  if (s.lastHost) s.pairRemembered = true
   const winLegacy = join(app.getPath('downloads'), 'PeerSwitch')
   if (!s.downloadDir) {
     s.downloadDir = defaultDownloadDir()
@@ -79,4 +89,23 @@ export function updateSettings(patch: Partial<PeerSwitchSettings>): PeerSwitchSe
   const next = { ...getSettings(), ...patch }
   store.set(next)
   return next
+}
+
+export function rememberPairing(host: string, code: string, role: 'host' | 'client'): void {
+  updateSettings({
+    lastHost: host,
+    lastCode: code || '666666',
+    lastRole: role,
+    pairRemembered: true,
+    autoReconnect: true
+  })
+}
+
+export function forgetPairing(): PeerSwitchSettings {
+  return updateSettings({
+    lastHost: '',
+    lastRole: '',
+    pairRemembered: false,
+    lastCode: '666666'
+  })
 }

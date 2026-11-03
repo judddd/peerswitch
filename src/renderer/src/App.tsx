@@ -383,9 +383,23 @@ export default function App(): JSX.Element {
                 <div className="card">
                   <h2>加入连接</h2>
                   <p>
-                    扫描局域网开放 {settings.port} 端口的主机，点选 IP 即可配对（配对码默认
-                    666666）。对端需已打开 PeerSwitch；Windows 请允许防火墙专用网络入站。
+                    扫描或填写主机 IP（建议填固定 IP 的 Mac）。配对成功后会自动记住，Windows
+                    重启换 IP 也会自己连回去。配对码默认 666666。
                   </p>
+                  {settings.lastHost ? (
+                    <div className="status-bar" style={{ marginBottom: 12 }}>
+                      <div>
+                        <span className="dot wait" />
+                        已记住 {settings.lastHost}，正在自动重连…
+                      </div>
+                      <button
+                        className="btn btn-secondary"
+                        onClick={() => void onJoin(settings.lastHost)}
+                      >
+                        立即重连
+                      </button>
+                    </div>
+                  ) : null}
                   <button
                     className="btn btn-secondary"
                     disabled={busy || scanning}
@@ -491,10 +505,21 @@ export default function App(): JSX.Element {
                   {state.role === 'host' ? ' · 主机' : ' · 客户端'}
                 </div>
                 <button
-                  className="btn btn-danger"
+                  className="btn btn-secondary"
                   onClick={() => void window.peerswitch.disconnect()}
                 >
-                  断开连接
+                  暂时断开
+                </button>
+                <button
+                  className="btn btn-danger"
+                  onClick={async () => {
+                    const next = await window.peerswitch.forgetPairing()
+                    setSettings(next)
+                    setHostIp('')
+                    setLog('已忘记配对，下次需重新选择主机')
+                  }}
+                >
+                  断开并忘记
                 </button>
               </div>
               <div className="log-line">{log}</div>
@@ -699,12 +724,32 @@ export default function App(): JSX.Element {
               </div>
 
               <div className="toggle">
-                <span>启动后自动按上次加入</span>
+                <span>记住配对并自动重连</span>
                 <button
                   className={`switch ${settings.autoReconnect ? 'on' : ''}`}
                   onClick={() => void saveSettings({ autoReconnect: !settings.autoReconnect })}
                 />
               </div>
+              {settings.lastHost ? (
+                <p className="muted" style={{ margin: '4px 0 10px' }}>
+                  已记住主机 {settings.lastHost}
+                  {settings.lastRole === 'client' ? '（本机将主动连接）' : ''}
+                  。Windows 重启换 IP 也不用重新配对。
+                </p>
+              ) : null}
+              {settings.lastHost ? (
+                <button
+                  className="btn btn-secondary"
+                  onClick={async () => {
+                    const next = await window.peerswitch.forgetPairing()
+                    setSettings(next)
+                    setHostIp('')
+                    setLog('已清除配对记忆')
+                  }}
+                >
+                  清除配对记忆
+                </button>
+              ) : null}
 
               <div className="toggle">
                 <span>关闭窗口时留在托盘</span>

@@ -27,6 +27,7 @@ export type PeerSwitchSettings = {
   lastHost: string
   lastCode: string
   lastRole: 'host' | 'client' | ''
+  pairRemembered: boolean
 }
 
 const api = {
@@ -39,6 +40,7 @@ const api = {
   startHost: (): Promise<{ code: string; port: number }> => ipcRenderer.invoke('host:start'),
   join: (host: string, code: string): Promise<void> => ipcRenderer.invoke('host:join', host, code),
   disconnect: (): Promise<void> => ipcRenderer.invoke('host:disconnect'),
+  forgetPairing: (): Promise<PeerSwitchSettings> => ipcRenderer.invoke('host:forget'),
   getState: (): Promise<ConnState> => ipcRenderer.invoke('host:state'),
   scanLan: (): Promise<{ ip: string; port: number; ms: number }[]> =>
     ipcRenderer.invoke('lan:scan'),

@@ -13,7 +13,12 @@ import {
   screen
 } from 'electron'
 import { join } from 'path'
-import { getSettings, updateSettings, type PeerSwitchSettings } from './store'
+import {
+  forgetPairing,
+  getSettings,
+  updateSettings,
+  type PeerSwitchSettings
+} from './store'
 import { session } from './network'
 import { COMMON_INPUTS, ensureDownloadDir, switchMonitorInput } from './ddc'
 import { applyOpenAtLogin, isBackgroundLaunch } from './autostart'
@@ -337,11 +342,15 @@ function registerIpc(): void {
   })
   ipcMain.handle('host:join', async (_e, host: string, code: string) => {
     const pair = code && /^\d{6}$/.test(code) ? code : DEFAULT_PAIR_CODE
-    updateSettings({ lastHost: host, lastCode: pair, lastRole: 'client' })
     await session.join(host, pair)
   })
   ipcMain.handle('host:disconnect', () => {
-    session.disconnect()
+    // 普通断开：保留配对，后台继续自动重连
+    session.disconnect(false)
+  })
+  ipcMain.handle('host:forget', () => {
+    session.disconnect(true)
+    return forgetPairing()
   })
   ipcMain.handle('host:state', () => session.state)
   ipcMain.handle('lan:scan', async (event) => {
@@ -408,15 +417,12 @@ async function bootstrapService(): Promise<void> {
   applyOpenAtLogin(settings.openAtLogin)
   await ensureDownloadDir(settings.downloadDir)
 
-  // 始终拉起端口监听：客户端加入后也对局域网可见，方便扫描发现
+  // 始终拉起端口监听；若已记住主机（Mac 固定 IP），Windows 开机后自动连回去
   try {
     await session.startHost(DEFAULT_PAIR_CODE)
-    if (settings.autoReconnect && settings.lastHost && settings.lastCode) {
-      try {
-        await session.join(settings.lastHost, settings.lastCode || DEFAULT_PAIR_CODE)
-      } catch (e) {
-        broadcast('log', `自动重连失败：${e instanceof Error ? e.message : String(e)}`)
-      }
+    if (settings.autoReconnect && settings.lastHost) {
+      broadcast('log', `已记住主机 ${settings.lastHost}，开始自动配对…`)
+      session.scheduleReconnect('开机启动')
     }
   } catch (e) {
     broadcast('log', `后台服务启动：${e instanceof Error ? e.message : String(e)}`)
