@@ -664,7 +664,7 @@ export default function App(): JSX.Element {
                   style={{ marginBottom: 12 }}
                   onClick={() => void window.peerswitch.openContextMenuSettings()}
                 >
-                  打开辅助功能设置
+                  重新注册右键菜单
                 </button>
               ) : null}
 

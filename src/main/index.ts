@@ -26,8 +26,8 @@ import {
   applyShellIntegration,
   contextMenuGuideText,
   extractSendFiles,
-  isAccessibilityTrusted,
-  openContextMenuSettings
+  openContextMenuSettings,
+  stopFinderServiceHelper
 } from './shell-integration'
 import { store } from './store'
 
@@ -367,24 +367,20 @@ function registerIpc(): void {
 async function showContextMenuGuide(force = false): Promise<void> {
   if (process.platform !== 'darwin') return
   if (!getSettings().contextMenuSend) return
-  if (!force && (store.get('__context_menu_guide_v4') || isAccessibilityTrusted())) return
+  if (!force && store.get('__context_menu_guide_v5')) return
 
   showMainWindow()
   const { title, detail } = contextMenuGuideText()
-  const result = await dialog.showMessageBox(mainWindow ?? undefined!, {
+  await dialog.showMessageBox(mainWindow ?? undefined!, {
     type: 'info',
     title: 'PeerSwitch',
     message: title,
     detail,
-    buttons: ['打开辅助功能设置', '稍后'],
+    buttons: ['知道了'],
     defaultId: 0,
-    cancelId: 1,
     noLink: true
   })
-  store.set('__context_menu_guide_v4', true)
-  if (result.response === 0) {
-    await openContextMenuSettings()
-  }
+  store.set('__context_menu_guide_v5', true)
 }
 
 async function bootstrapService(): Promise<void> {
@@ -454,6 +450,7 @@ app.on('before-quit', () => {
 app.on('will-quit', () => {
   globalShortcut.unregisterAll()
   session.shutdown()
+  stopFinderServiceHelper()
 })
 
 app.on('window-all-closed', () => {

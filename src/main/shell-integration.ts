@@ -1,5 +1,5 @@
-import { app, shell, systemPreferences } from 'electron'
-import { execFile } from 'child_process'
+import { app } from 'electron'
+import { execFile, spawn } from 'child_process'
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
@@ -80,14 +80,14 @@ function buildMacInfoPlist(): string {
 			</dict>
 			<key>NSMessage</key>
 			<string>runWorkflowAsService</string>
-			<key>NSRequiredContext</key>
-			<dict>
-				<key>NSApplicationIdentifier</key>
-				<string>com.apple.finder</string>
-			</dict>
 			<key>NSSendFileTypes</key>
 			<array>
 				<string>public.item</string>
+				<string>public.directory</string>
+			</array>
+			<key>NSSendTypes</key>
+			<array>
+				<string>NSFilenamesPboardType</string>
 			</array>
 		</dict>
 	</array>
@@ -233,7 +233,7 @@ function buildMacDocumentWflow(shellCmd: string): string {
 		<key>serviceProcessesInput</key>
 		<integer>0</integer>
 		<key>workflowTypeIdentifier</key>
-		<string>com.apple.Automator.services.quickaction</string>
+		<string>com.apple.Automator.services</string>
 	</dict>
 </dict>
 </plist>
@@ -253,6 +253,58 @@ async function flushMacServices(): Promise<void> {
   }
 }
 
+function finderServiceApp(): string {
+  if (app.isPackaged) {
+    return join(process.resourcesPath, 'PeerSwitchService.app')
+  }
+  return join(app.getAppPath(), 'native/bin/PeerSwitchService.app')
+}
+
+function finderServiceBinary(): string {
+  return join(finderServiceApp(), 'Contents/MacOS/PeerSwitchService')
+}
+
+async function enablePbsContextMenu(bundleId: string, menu: string): Promise<void> {
+  const key = `${bundleId} - ${menu}`
+  try {
+    await execFileAsync('defaults', [
+      'write',
+      'pbs',
+      'NSServicesStatus',
+      '-dict-add',
+      key,
+      '{ enabled_context_menu = 1; enabled_services_menu = 1; }'
+    ])
+  } catch {
+    /* ignore */
+  }
+}
+
+function startFinderServiceHelper(): void {
+  if (process.platform !== 'darwin') return
+  const bin = finderServiceBinary()
+  if (!existsSync(bin)) return
+  try {
+    spawn('/usr/bin/pkill', ['-x', 'PeerSwitchService'], { stdio: 'ignore' })
+  } catch {
+    /* ignore */
+  }
+  const child = spawn(bin, [], {
+    detached: true,
+    stdio: 'ignore',
+    env: { ...process.env, PEERSWITCH_BIN: getLaunchSpec().bin }
+  })
+  child.unref()
+}
+
+export function stopFinderServiceHelper(): void {
+  try {
+    spawn('/usr/bin/pkill', ['-x', 'PeerSwitchService'], { stdio: 'ignore' })
+  } catch {
+    /* ignore */
+  }
+}
+
 async function installMac(): Promise<void> {
   const spec = getLaunchSpec()
   const root = macWorkflowDir()
@@ -261,10 +313,29 @@ async function installMac(): Promise<void> {
   mkdirSync(contents, { recursive: true })
   writeFileSync(join(contents, 'Info.plist'), buildMacInfoPlist(), 'utf8')
   writeFileSync(join(contents, 'document.wflow'), buildMacDocumentWflow(buildMacShellCommand(spec)), 'utf8')
+  try {
+    await execFileAsync('xattr', ['-cr', root])
+  } catch {
+    /* ignore */
+  }
+  startFinderServiceHelper()
+  const helperApp = finderServiceApp()
+  if (existsSync(helperApp)) {
+    try {
+      const lsregister =
+        '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
+      await execFileAsync(lsregister, ['-f', helperApp])
+    } catch {
+      /* ignore */
+    }
+  }
+  await enablePbsContextMenu('app.peerswitch.service', MAC_SERVICE)
+  await enablePbsContextMenu('app.peerswitch.send-to-peer', MAC_SERVICE)
   await flushMacServices()
 }
 
 async function uninstallMac(): Promise<void> {
+  stopFinderServiceHelper()
   rmSync(macWorkflowDir(), { recursive: true, force: true })
   await flushMacServices()
 }
@@ -323,45 +394,17 @@ export function shellIntegrationInstalled(): boolean {
   return false
 }
 
-export function isAccessibilityTrusted(): boolean {
-  if (process.platform !== 'darwin') return true
-  try {
-    return systemPreferences.isTrustedAccessibilityClient(false)
-  } catch {
-    return false
-  }
-}
-
-/** 打开「系统设置 → 隐私与安全性 → 辅助功能」，并弹出系统授权框 */
 export async function openContextMenuSettings(): Promise<void> {
   if (process.platform !== 'darwin') return
-
-  try {
-    systemPreferences.isTrustedAccessibilityClient(true)
-  } catch {
-    /* 部分环境不支持 prompt，仍打开设置页 */
-  }
-
-  const urls = [
-    'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility',
-    'x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility'
-  ]
-  for (const url of urls) {
-    try {
-      await shell.openExternal(url)
-      return
-    } catch {
-      /* try next */
-    }
-  }
+  await applyShellIntegration(true)
 }
 
 export function contextMenuGuideText(): { title: string; detail: string } {
   if (process.platform === 'darwin') {
     return {
-      title: '启用访达右键「传送至对端」',
+      title: '访达右键「传送至对端」',
       detail:
-        '请到「隐私与安全性 → 辅助功能」中打开 PeerSwitch。\n\n打开后，访达里选中文件，右键即可看到「传送至对端」。'
+        '已启用。在访达中选中文件，右键即可看到「传送至对端」。\n若在底部「服务」子菜单里，点一下即可。'
     }
   }
   return {

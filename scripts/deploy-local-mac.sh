@@ -10,6 +10,9 @@ export http_proxy="${http_proxy:-http://127.0.0.1:51894}"
 unset all_proxy ALL_PROXY || true
 export CSC_IDENTITY_AUTO_DISCOVERY="${CSC_IDENTITY_AUTO_DISCOVERY:-false}"
 
+echo "==> 编译访达右键服务"
+bash scripts/build-finder-service.sh
+
 echo "==> 编译 PeerSwitch"
 npm run build
 
