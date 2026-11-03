@@ -48,6 +48,8 @@ const api = {
     ipcRenderer.invoke('switch:local', input),
 
   pickAndSendFiles: (): Promise<string[]> => ipcRenderer.invoke('file:pick-and-send'),
+  sendFilePaths: (paths: string[]): Promise<string[]> =>
+    ipcRenderer.invoke('file:send-paths', paths),
   acceptFile: (id: string, name: string, size: number): Promise<void> =>
     ipcRenderer.invoke('file:accept', id, name, size),
   rejectFile: (id: string): Promise<void> => ipcRenderer.invoke('file:reject', id),

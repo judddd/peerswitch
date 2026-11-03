@@ -252,6 +252,23 @@ function registerIpc(): void {
   ipcMain.handle('switch:now', async () => doSwitch())
   ipcMain.handle('switch:local', async (_e, input: string) => switchMonitorInput(input))
 
+  async function sendPaths(paths: string[]): Promise<string[]> {
+    if (session.state.status !== 'connected') {
+      broadcast('log', '请先连接对端后再传送文件')
+      throw new Error('请先连接对端后再传送文件')
+    }
+    const ids: string[] = []
+    for (const p of paths) {
+      ids.push(await session.sendFile(p))
+    }
+    return ids
+  }
+
+  ipcMain.handle('file:send-paths', async (_e, paths: string[]) => {
+    broadcast('open-panel', 'files')
+    return sendPaths(paths.filter(Boolean))
+  })
+
   ipcMain.handle('file:pick-and-send', async () => {
     showMainWindow()
     broadcast('open-panel', 'files')
@@ -264,11 +281,7 @@ function registerIpc(): void {
       title: '选择要发送的文件'
     })
     if (res.canceled || !res.filePaths.length) return []
-    const ids: string[] = []
-    for (const p of res.filePaths) {
-      ids.push(await session.sendFile(p))
-    }
-    return ids
+    return sendPaths(res.filePaths)
   })
   ipcMain.handle('file:accept', async (_e, id: string, name: string, size: number) => {
     await session.acceptFile(id, name, size)

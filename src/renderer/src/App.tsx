@@ -69,6 +69,7 @@ export default function App(): JSX.Element {
   const [scanProgress, setScanProgress] = useState('')
   const [lanHits, setLanHits] = useState<{ ip: string; port: number; ms: number }[]>([])
   const [log, setLog] = useState('')
+  const [dropActive, setDropActive] = useState(false)
   const [transfers, setTransfers] = useState<Transfer[]>([])
   const [pendingOffer, setPendingOffer] = useState<{
     id: string
@@ -236,6 +237,28 @@ export default function App(): JSX.Element {
     }
   }
 
+  const sendDroppedFiles = async (fileList: FileList | File[]): Promise<void> => {
+    const files = Array.from(fileList)
+    const paths = files
+      .map((f) => (f as File & { path?: string }).path)
+      .filter((p): p is string => Boolean(p))
+    if (!paths.length) {
+      setLog('未能读取拖入文件的本地路径')
+      return
+    }
+    setPanel('files')
+    if (state.status !== 'connected') {
+      setLog('请先连接对端后再传送文件')
+      return
+    }
+    try {
+      await window.peerswitch.sendFilePaths(paths)
+      setLog(`正在上传 ${paths.length} 个文件…`)
+    } catch (e) {
+      setLog(e instanceof Error ? e.message : String(e))
+    }
+  }
+
   const statusLabel = useMemo(() => {
     if (state.status === 'connected') return `已连接：${state.peerName}`
     if (state.status === 'hosting') return '主机等待中（后台常驻）'
@@ -252,7 +275,11 @@ export default function App(): JSX.Element {
     hostInfo?.code || (state.status === 'hosting' ? state.code : '') || settings.lastCode || ''
 
   return (
-    <div className="app">
+    <div
+      className="app"
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={(e) => e.preventDefault()}
+    >
       <header className="titlebar">
         <div className="titlebar-brand">
           <div className="logo-mark" />
@@ -267,21 +294,62 @@ export default function App(): JSX.Element {
           >
             <IconSwitch active={connected} />
           </button>
-          <button
-            className={`icon-btn ${panel === 'files' ? 'active' : ''}`}
-            title={`传送文件（${fileHotkeyLabel}）`}
+
+          <div
+            className={`drop-zone ${dropActive ? 'active' : ''} ${connected ? 'ready' : ''} ${
+              panel === 'files' ? 'open' : ''
+            }`}
+            title={
+              connected
+                ? `拖入文件即可上传（也可点击选择，${fileHotkeyLabel}）`
+                : '连接对端后，拖入文件即可上传'
+            }
+            onDragEnter={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              setDropActive(true)
+            }}
+            onDragOver={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              setDropActive(true)
+            }}
+            onDragLeave={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              setDropActive(false)
+            }}
+            onDrop={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              setDropActive(false)
+              void sendDroppedFiles(e.dataTransfer.files)
+            }}
             onClick={() => {
               if (panel === 'files') {
-                setPanel('none')
+                void onSendFiles()
                 return
               }
               setPanel('files')
-              // 已连接：直接弹出选文件；未连接：打开面板并提示
-              void onSendFiles()
+              if (connected) void onSendFiles()
+              else setLog('请先连接对端后再传送文件')
+            }}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                void onSendFiles()
+              }
             }}
           >
             <IconFiles />
-          </button>
+            <div className="drop-zone-text">
+              <strong>{dropActive ? '松开上传' : '拖入文件'}</strong>
+              <span>{connected ? '自动发送到对端' : '先连接对端'}</span>
+            </div>
+          </div>
+
           <button
             className={`icon-btn ${panel === 'settings' ? 'active' : ''}`}
             title="设置"

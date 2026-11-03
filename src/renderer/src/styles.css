@@ -86,8 +86,75 @@ select {
 
 .titlebar-actions {
   display: flex;
-  gap: 6px;
+  align-items: center;
+  gap: 8px;
   -webkit-app-region: no-drag;
+}
+
+.drop-zone {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 148px;
+  height: 36px;
+  padding: 0 12px 0 10px;
+  border-radius: 11px;
+  border: 1px dashed rgba(0, 0, 0, 0.18);
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--ink-secondary);
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    color 0.15s ease,
+    transform 0.12s ease;
+}
+
+.drop-zone svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.drop-zone-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+  min-width: 0;
+}
+
+.drop-zone-text strong {
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--ink);
+}
+
+.drop-zone-text span {
+  font-size: 10px;
+  color: var(--ink-tertiary);
+}
+
+.drop-zone:hover,
+.drop-zone.open {
+  border-color: rgba(0, 113, 227, 0.35);
+  background: rgba(0, 113, 227, 0.06);
+}
+
+.drop-zone.ready {
+  border-color: rgba(0, 113, 227, 0.28);
+}
+
+.drop-zone.active {
+  border-style: solid;
+  border-color: var(--blue);
+  background: rgba(0, 113, 227, 0.12);
+  color: var(--blue);
+  transform: scale(1.02);
+}
+
+.drop-zone.active .drop-zone-text strong,
+.drop-zone.active .drop-zone-text span {
+  color: var(--blue);
 }
 
 .icon-btn {
