@@ -1,0 +1,17 @@
+node_modules
+out
+dist
+release
+.DS_Store
+*.log
+.vscode
+.idea
+.npmrc
+resources/icon.iconset
+native/bin/m1ddc
+native/bin/ddcctl
+native/bin/OrbitDDC
+native/bin/PeerSwitchDDC
+!native/bin/.gitkeep
+!native/bin/OrbitDDC.sh
+!native/bin/PeerSwitchDDC.sh
