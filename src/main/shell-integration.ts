@@ -1,4 +1,4 @@
-import { app } from 'electron'
+import { app, shell } from 'electron'
 import { execFile } from 'child_process'
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
@@ -321,4 +321,42 @@ export function shellIntegrationInstalled(): boolean {
     return existsSync(macWorkflowDir())
   }
   return false
+}
+
+/** 打开系统设置里键盘快捷键页（服务 / 快速操作） */
+export async function openContextMenuSettings(): Promise<void> {
+  if (process.platform === 'darwin') {
+    const candidates = [
+      'x-apple.systempreferences:com.apple.Keyboard-Settings.extension',
+      'x-apple.systempreferences:com.apple.preference.keyboard'
+    ]
+    for (const url of candidates) {
+      try {
+        await shell.openExternal(url)
+        return
+      } catch {
+        /* try next */
+      }
+    }
+    await shell.openExternal('x-apple.systempreferences:com.apple.Keyboard-Settings.extension')
+    return
+  }
+  if (process.platform === 'win32') {
+    // Windows 右键写入注册表后一般立刻可用，打开文件夹作示意
+    await shell.openPath(homedir())
+  }
+}
+
+export function contextMenuGuideText(): { title: string; detail: string } {
+  if (process.platform === 'darwin') {
+    return {
+      title: '启用右键「传送至对端」',
+      detail:
+        '已安装访达快速操作。若右键菜单暂时看不到：\n系统设置 → 键盘 → 键盘快捷键 → 服务（或快速操作）→ 勾选「传送至对端」。'
+    }
+  }
+  return {
+    title: '右键「传送至对端」',
+    detail: '已写入资源管理器右键菜单，选中文件即可看到。'
+  }
 }

@@ -707,6 +707,15 @@ export default function App(): JSX.Element {
                   }
                 />
               </div>
+              {settings.contextMenuSend ? (
+                <button
+                  className="btn btn-secondary"
+                  style={{ marginBottom: 12 }}
+                  onClick={() => void window.peerswitch.showContextMenuGuide()}
+                >
+                  右键启用指引
+                </button>
+              ) : null}
 
               <button
                 className="btn btn-secondary"

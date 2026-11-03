@@ -22,7 +22,13 @@ import { session } from './network'
 import { COMMON_INPUTS, ensureDownloadDir, switchMonitorInput } from './ddc'
 import { applyOpenAtLogin, isBackgroundLaunch } from './autostart'
 import { DEFAULT_PAIR_CODE, scanLanPeers } from './lan-scan'
-import { applyShellIntegration, extractSendFiles } from './shell-integration'
+import {
+  applyShellIntegration,
+  contextMenuGuideText,
+  extractSendFiles,
+  openContextMenuSettings
+} from './shell-integration'
+import { store } from './store'
 
 const isDev = !app.isPackaged
 
@@ -278,6 +284,9 @@ function registerIpc(): void {
     if (typeof patch.contextMenuSend === 'boolean') {
       try {
         await applyShellIntegration(patch.contextMenuSend)
+        if (patch.contextMenuSend) {
+          await showContextMenuGuide(true)
+        }
       } catch (e) {
         broadcast('log', e instanceof Error ? e.message : String(e))
       }
@@ -356,6 +365,32 @@ function registerIpc(): void {
     return { openAtLogin: getSettings().openAtLogin, system: login }
   })
   ipcMain.handle('window:show', () => showMainWindow())
+  ipcMain.handle('shell:open-context-settings', () => openContextMenuSettings())
+  ipcMain.handle('shell:show-context-guide', () => showContextMenuGuide(true))
+}
+
+async function showContextMenuGuide(force = false): Promise<void> {
+  if (!getSettings().contextMenuSend) return
+  if (!force && store.get('__context_menu_guide_v1')) return
+
+  showMainWindow()
+  const { title, detail } = contextMenuGuideText()
+  const buttons =
+    process.platform === 'darwin' ? ['打开系统设置', '知道了'] : ['知道了']
+  const result = await dialog.showMessageBox(mainWindow ?? undefined!, {
+    type: 'info',
+    title: 'PeerSwitch',
+    message: title,
+    detail,
+    buttons,
+    defaultId: 0,
+    cancelId: buttons.length - 1,
+    noLink: true
+  })
+  store.set('__context_menu_guide_v1', true)
+  if (process.platform === 'darwin' && result.response === 0) {
+    await openContextMenuSettings()
+  }
 }
 
 async function bootstrapService(): Promise<void> {
@@ -409,6 +444,9 @@ app.whenReady().then(async () => {
   const queued = [...pendingSendFiles, ...fromArgv]
   pendingSendFiles.length = 0
   if (queued.length) void handleExternalSend(queued)
+
+  // 首次启动提示如何启用右键传送（macOS 需在系统设置里勾选）
+  void showContextMenuGuide(false)
 
   app.on('activate', () => {
     showMainWindow()

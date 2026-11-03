@@ -62,6 +62,8 @@ const api = {
   openDownloadDir: (): Promise<void> => ipcRenderer.invoke('file:open-download-dir'),
 
   showMainWindow: (): Promise<void> => ipcRenderer.invoke('window:show'),
+  openContextMenuSettings: (): Promise<void> => ipcRenderer.invoke('shell:open-context-settings'),
+  showContextMenuGuide: (): Promise<void> => ipcRenderer.invoke('shell:show-context-guide'),
 
   on: (channel: string, cb: (payload: unknown) => void): (() => void) => {
     const listener = (_: Electron.IpcRendererEvent, payload: unknown): void => cb(payload)
