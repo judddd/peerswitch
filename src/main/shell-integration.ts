@@ -324,65 +324,117 @@ export function shellIntegrationInstalled(): boolean {
 }
 
 /**
- * 打开系统设置并尽量进入「键盘快捷键」面板，方便勾选快速操作。
- * 路径：系统设置 → 键盘 → 键盘快捷键… → 服务 / 快速操作 → 传送至对端
+ * 直接打开「键盘快捷键」面板，并选中左侧「快速操作 / 服务」。
+ * 目标是让用户勾选「传送至对端」，不要停在键盘设置首页。
  */
 export async function openContextMenuSettings(): Promise<void> {
   if (process.platform !== 'darwin') return
 
+  // 优先走 Shortcuts 深链，尽量别落在键盘首页
+  const deepLinks = [
+    'x-apple.systempreferences:com.apple.Keyboard-Settings.extension?Shortcuts',
+    'x-apple.systempreferences:com.apple.preference.keyboard?Shortcuts'
+  ]
+  for (const url of deepLinks) {
+    try {
+      await shell.openExternal(url)
+      break
+    } catch {
+      /* try next */
+    }
+  }
+
   const script = `
-tell application "System Settings"
-  activate
-  try
-    reveal anchor "Shortcuts" of pane id "com.apple.Keyboard-Settings.extension"
-  on error
-    try
-      set current pane to pane id "com.apple.Keyboard-Settings.extension"
-    end try
-  end try
-end tell
-delay 1.0
-tell application "System Events"
-  tell process "System Settings"
+on clickNamedButton(proc, names)
+  tell process proc
     set frontmost to true
-    -- 点「键盘快捷键…」
-    try
-      click (first button whose name contains "键盘快捷键" or name contains "Keyboard Shortcuts") of window 1
-    on error
+    repeat with nm in names
+      try
+        click (first button whose name contains (nm as text)) of window 1
+        return true
+      end try
       try
         repeat with g in groups of window 1
           try
-            click (first button whose name contains "键盘快捷键" or name contains "Keyboard Shortcuts") of g
-            exit repeat
+            click (first button whose name contains (nm as text)) of g
+            return true
+          end try
+          try
+            repeat with g2 in groups of g
+              try
+                click (first button whose name contains (nm as text)) of g2
+                return true
+              end try
+            end repeat
           end try
         end repeat
       end try
-    end try
-    delay 0.7
-    -- 左侧点「服务」或「快速操作」
-    try
-      click (first static text whose value is "服务" or value is "Services" or value is "快速操作" or value is "Quick Actions") of window 1
-    end try
+    end repeat
   end tell
+  return false
+end clickNamedButton
+
+on clickNamedRow(proc, names)
+  tell process proc
+    set frontmost to true
+    repeat with nm in names
+      set target to nm as text
+      -- outline / table / static text
+      try
+        click (first UI element whose name is target) of window 1
+        return true
+      end try
+      try
+        repeat with w in windows
+          try
+            click (first UI element whose name is target) of w
+            return true
+          end try
+          try
+            click (first static text whose value is target) of w
+            return true
+          end try
+          try
+            click (first row whose name is target) of outline 1 of scroll area 1 of splitter group 1 of w
+            return true
+          end try
+          try
+            click (first row whose name is target) of table 1 of scroll area 1 of splitter group 1 of w
+            return true
+          end try
+        end repeat
+      end try
+    end repeat
+  end tell
+  return false
+end clickNamedRow
+
+tell application "System Settings" to activate
+delay 0.6
+
+tell application "System Events"
+  -- 若还在键盘首页，点「键盘快捷键…」进入面板
+  my clickNamedButton("System Settings", {"键盘快捷键", "Keyboard Shortcuts"})
+  delay 0.8
+  -- 左侧优先「快速操作」，再「服务」
+  if not my clickNamedRow("System Settings", {"快速操作", "Quick Actions"}) then
+    my clickNamedRow("System Settings", {"服务", "Services"})
+  end if
 end tell
 `
   try {
     await execFileAsync('osascript', ['-e', script])
   } catch {
-    try {
-      await shell.openExternal('x-apple.systempreferences:com.apple.Keyboard-Settings.extension')
-    } catch {
-      /* ignore */
-    }
+    /* 无辅助功能权限时，至少已尝试打开 Shortcuts 深链 */
   }
 }
 
 export function contextMenuGuideText(): { title: string; detail: string } {
   if (process.platform === 'darwin') {
     return {
-      title: '请勾选访达「快速操作」',
+      title: '勾选「传送至对端」',
       detail:
-        '已安装「传送至对端」。要在访达右键菜单里出现，需在系统设置中勾选一次：\n\n系统设置 → 键盘 → 键盘快捷键… → 服务 / 快速操作 → 勾选「传送至对端」\n\n点下方按钮可直接打开系统设置。'
+        '已安装访达右键项。请在打开的快捷键面板左侧选择「快速操作」或「服务」，勾选「传送至对端」。'
     }
   }
   return {
