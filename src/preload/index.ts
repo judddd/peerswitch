@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
 export type ConnState =
   | { status: 'idle' }
@@ -54,6 +54,7 @@ const api = {
     ipcRenderer.invoke('switch:local', input),
 
   pickAndSendFiles: (): Promise<string[]> => ipcRenderer.invoke('file:pick-and-send'),
+  getPathForFile: (file: File): string => webUtils.getPathForFile(file),
   sendFilePaths: (paths: string[]): Promise<string[]> =>
     ipcRenderer.invoke('file:send-paths', paths),
   acceptFile: (id: string, name: string, size: number): Promise<void> =>

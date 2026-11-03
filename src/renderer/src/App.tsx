@@ -214,7 +214,15 @@ export default function App(): JSX.Element {
   const sendDroppedFiles = async (fileList: FileList | File[]): Promise<void> => {
     const files = Array.from(fileList)
     const paths = files
-      .map((f) => (f as File & { path?: string }).path)
+      .map((f) => {
+        try {
+          const viaWeb = window.peerswitch.getPathForFile(f)
+          if (viaWeb) return viaWeb
+        } catch {
+          /* Electron <32 fallback */
+        }
+        return (f as File & { path?: string }).path || ''
+      })
       .filter((p): p is string => Boolean(p))
     if (!paths.length) {
       setLog('无法读取文件路径')
