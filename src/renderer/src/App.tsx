@@ -62,8 +62,6 @@ export default function App(): JSX.Element {
   const [state, setState] = useState<ConnState>({ status: 'idle' })
   const [panel, setPanel] = useState<Panel>('none')
   const [hostIp, setHostIp] = useState('')
-  const [joinCode, setJoinCode] = useState('666666')
-  const [hostInfo, setHostInfo] = useState<{ code: string; port: number } | null>(null)
   const [busy, setBusy] = useState(false)
   const [scanning, setScanning] = useState(false)
   const [scanProgress, setScanProgress] = useState('')
@@ -82,7 +80,6 @@ export default function App(): JSX.Element {
       const s = await window.peerswitch.getSettings()
       setSettings(s)
       setHostIp(s.lastHost || '')
-      setJoinCode(s.lastCode && /^\d{6}$/.test(s.lastCode) ? s.lastCode : '666666')
       setInputs(await window.peerswitch.commonInputs())
       setState(await window.peerswitch.getState())
     })()
@@ -159,31 +156,16 @@ export default function App(): JSX.Element {
     setSettings(next)
   }, [])
 
-  const onCreate = async (): Promise<void> => {
-    setBusy(true)
-    try {
-      const info = await window.peerswitch.startHost()
-      setHostInfo(info)
-      setLog(`等待对端加入 · 端口 ${info.port}`)
-    } catch (e) {
-      setLog(e instanceof Error ? e.message : String(e))
-    } finally {
-      setBusy(false)
-    }
-  }
-
   const onJoin = async (ip?: string): Promise<void> => {
     const target = (ip || hostIp).trim()
-    const code = (joinCode.trim() || '666666').replace(/\D/g, '').slice(0, 6) || '666666'
     if (!target) {
       setLog('请填写主机 IP')
       return
     }
     setBusy(true)
     setHostIp(target)
-    setJoinCode(code)
     try {
-      await window.peerswitch.join(target, code)
+      await window.peerswitch.join(target, '666666')
     } catch (e) {
       setLog(e instanceof Error ? e.message : String(e))
     } finally {
@@ -265,8 +247,6 @@ export default function App(): JSX.Element {
   }
 
   const connected = state.status === 'connected'
-  const codeText =
-    hostInfo?.code || (state.status === 'hosting' ? state.code : '') || settings.lastCode || ''
 
   return (
     <div
@@ -353,92 +333,73 @@ export default function App(): JSX.Element {
               <div className="eyebrow">PeerSwitch</div>
               <h1>一台显示器，两台电脑</h1>
 
-              <div className="card-row">
-                <div className="card">
-                  <h2>创建连接</h2>
-                  <button className="btn btn-primary" disabled={busy} onClick={() => void onCreate()}>
-                    创建连接
-                  </button>
-                  <div className="code-pill">{codeText || '666666'}</div>
-                </div>
-
-                <div className="card">
-                  <h2>加入连接</h2>
-                  {settings.pairId || settings.lastHost ? (
-                    <div className="status-bar" style={{ marginBottom: 12 }}>
-                      <div>
-                        <span className="dot wait" />
-                        {settings.lastPeerName
-                          ? `正在连接 ${settings.lastPeerName}…`
-                          : settings.lastHost
-                            ? `正在重连 ${settings.lastHost}…`
-                            : '正在寻找对端…'}
-                      </div>
-                      {settings.lastHost ? (
-                        <button
-                          className="btn btn-secondary"
-                          onClick={() => void onJoin(settings.lastHost)}
-                        >
-                          立即重连
-                        </button>
-                      ) : null}
+              <div className="card join-card">
+                <h2>加入对端</h2>
+                {settings.pairId || settings.lastHost ? (
+                  <div className="status-bar" style={{ marginBottom: 12 }}>
+                    <div>
+                      <span className="dot wait" />
+                      {settings.lastPeerName
+                        ? `正在连接 ${settings.lastPeerName}…`
+                        : settings.lastHost
+                          ? `正在重连 ${settings.lastHost}…`
+                          : '正在寻找对端…'}
                     </div>
-                  ) : null}
-                  <button
-                    className="btn btn-secondary"
-                    disabled={busy || scanning}
-                    onClick={() => void onScanLan()}
-                    style={{ marginBottom: 12, width: '100%' }}
-                  >
-                    {scanning ? scanProgress || '扫描中…' : '扫描局域网'}
-                  </button>
-                  {lanHits.length > 0 && (
-                    <div className="lan-hit-list">
-                      {lanHits.map((h) => (
-                        <button
-                          key={h.ip}
-                          type="button"
-                          className={`lan-hit ${hostIp === h.ip ? 'selected' : ''}`}
-                          disabled={busy}
-                          onClick={() => void onJoin(h.ip)}
-                          title={`${h.ms} ms`}
-                        >
-                          <strong>{h.ip}</strong>
-                          <span>{h.ms} ms</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  {!scanning && scanProgress && lanHits.length === 0 && (
-                    <p className="muted" style={{ marginBottom: 12 }}>
-                      {scanProgress}
-                    </p>
-                  )}
-                  <div className="field">
-                    <label>主机 IP</label>
-                    <input
-                      value={hostIp}
-                      placeholder="192.168.x.x"
-                      onChange={(e) => setHostIp(e.target.value)}
-                    />
+                    {settings.lastHost ? (
+                      <button
+                        className="btn btn-secondary"
+                        onClick={() => void onJoin(settings.lastHost)}
+                      >
+                        立即重连
+                      </button>
+                    ) : null}
                   </div>
-                  <div className="field">
-                    <label>配对码</label>
-                    <input
-                      value={joinCode}
-                      placeholder="666666"
-                      maxLength={6}
-                      onChange={(e) => setJoinCode(e.target.value.replace(/\D/g, ''))}
-                    />
+                ) : null}
+                <button
+                  className="btn btn-secondary"
+                  disabled={busy || scanning}
+                  onClick={() => void onScanLan()}
+                  style={{ marginBottom: 12, width: '100%' }}
+                >
+                  {scanning ? scanProgress || '扫描中…' : '扫描局域网'}
+                </button>
+                {lanHits.length > 0 && (
+                  <div className="lan-hit-list">
+                    {lanHits.map((h) => (
+                      <button
+                        key={h.ip}
+                        type="button"
+                        className={`lan-hit ${hostIp === h.ip ? 'selected' : ''}`}
+                        disabled={busy}
+                        onClick={() => void onJoin(h.ip)}
+                        title={`${h.ms} ms`}
+                      >
+                        <strong>{h.ip}</strong>
+                        <span>{h.ms} ms</span>
+                      </button>
+                    ))}
                   </div>
-                  <button
-                    className="btn btn-primary"
-                    disabled={busy || !hostIp || joinCode.length < 6}
-                    onClick={() => void onJoin()}
-                  >
-                    加入
-                  </button>
+                )}
+                {!scanning && scanProgress && lanHits.length === 0 && (
+                  <p className="muted" style={{ marginBottom: 12 }}>
+                    {scanProgress}
+                  </p>
+                )}
+                <div className="field">
+                  <label>主机 IP</label>
+                  <input
+                    value={hostIp}
+                    placeholder="192.168.x.x"
+                    onChange={(e) => setHostIp(e.target.value)}
+                  />
                 </div>
+                <button
+                  className="btn btn-primary"
+                  disabled={busy || !hostIp}
+                  onClick={() => void onJoin()}
+                >
+                  加入
+                </button>
               </div>
 
               <div className="status-bar">
@@ -687,14 +648,6 @@ export default function App(): JSX.Element {
                 <button
                   className={`switch ${settings.openAtLogin ? 'on' : ''}`}
                   onClick={() => void saveSettings({ openAtLogin: !settings.openAtLogin })}
-                />
-              </div>
-
-              <div className="toggle">
-                <span>启动后自动监听</span>
-                <button
-                  className={`switch ${settings.autoHost ? 'on' : ''}`}
-                  onClick={() => void saveSettings({ autoHost: !settings.autoHost })}
                 />
               </div>
 

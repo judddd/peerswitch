@@ -31,5 +31,5 @@ bash scripts/build-exe.sh   # Windows EXE
 ## 使用
 
 1. 两台电脑接到显示器不同输入口，开启 DDC/CI。
-2. 两边安装 PeerSwitch：一台创建连接，另一台加入。
+2. 两边安装 PeerSwitch（配对码固定 `666666`，启动即监听）；扫描或填写 IP 加入。
 3. 设置好本机/对端输入口，用按钮或快捷键切换。
