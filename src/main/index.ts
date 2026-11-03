@@ -364,26 +364,25 @@ function registerIpc(): void {
 }
 
 async function showContextMenuGuide(force = false): Promise<void> {
+  if (process.platform !== 'darwin') return
   if (!getSettings().contextMenuSend) return
-  if (!force && store.get('__context_menu_guide_v1')) return
+  // v2：明确引导去系统设置勾选快速操作
+  if (!force && store.get('__context_menu_guide_v2')) return
 
   showMainWindow()
   const { title, detail } = contextMenuGuideText()
-  // 默认「知道了」，避免一启动就丢进系统设置
-  const buttons =
-    process.platform === 'darwin' ? ['知道了', '打开键盘快捷键…'] : ['知道了']
   const result = await dialog.showMessageBox(mainWindow ?? undefined!, {
     type: 'info',
     title: 'PeerSwitch',
     message: title,
     detail,
-    buttons,
+    buttons: ['打开系统设置去勾选', '稍后'],
     defaultId: 0,
-    cancelId: 0,
+    cancelId: 1,
     noLink: true
   })
-  store.set('__context_menu_guide_v1', true)
-  if (process.platform === 'darwin' && result.response === 1) {
+  store.set('__context_menu_guide_v2', true)
+  if (result.response === 0) {
     await openContextMenuSettings()
   }
 }

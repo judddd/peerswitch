@@ -324,50 +324,65 @@ export function shellIntegrationInstalled(): boolean {
 }
 
 /**
- * 打开「键盘快捷键」面板（不是停在键盘首页）。
- * macOS 把访达「服务/快速操作」放在：系统设置 → 键盘 → 键盘快捷键…
+ * 打开系统设置并尽量进入「键盘快捷键」面板，方便勾选快速操作。
+ * 路径：系统设置 → 键盘 → 键盘快捷键… → 服务 / 快速操作 → 传送至对端
  */
 export async function openContextMenuSettings(): Promise<void> {
   if (process.platform !== 'darwin') return
 
-  // 先进入键盘页，再点「键盘快捷键…」打开真正的快捷键面板
   const script = `
 tell application "System Settings"
   activate
   try
-    set current pane to pane id "com.apple.Keyboard-Settings.extension"
+    reveal anchor "Shortcuts" of pane id "com.apple.Keyboard-Settings.extension"
+  on error
+    try
+      set current pane to pane id "com.apple.Keyboard-Settings.extension"
+    end try
   end try
 end tell
-delay 0.9
+delay 1.0
 tell application "System Events"
   tell process "System Settings"
     set frontmost to true
-    -- 点「键盘快捷键…」/ Keyboard Shortcuts…
+    -- 点「键盘快捷键…」
     try
       click (first button whose name contains "键盘快捷键" or name contains "Keyboard Shortcuts") of window 1
+    on error
+      try
+        repeat with g in groups of window 1
+          try
+            click (first button whose name contains "键盘快捷键" or name contains "Keyboard Shortcuts") of g
+            exit repeat
+          end try
+        end repeat
+      end try
+    end try
+    delay 0.7
+    -- 左侧点「服务」或「快速操作」
+    try
+      click (first static text whose value is "服务" or value is "Services" or value is "快速操作" or value is "Quick Actions") of window 1
     end try
   end tell
 end tell
 `
   try {
     await execFileAsync('osascript', ['-e', script])
-    return
   } catch {
-    /* 无辅助功能权限时退回手动路径说明 */
-  }
-  try {
-    await shell.openExternal('x-apple.systempreferences:com.apple.Keyboard-Settings.extension')
-  } catch {
-    /* ignore */
+    try {
+      await shell.openExternal('x-apple.systempreferences:com.apple.Keyboard-Settings.extension')
+    } catch {
+      /* ignore */
+    }
   }
 }
 
 export function contextMenuGuideText(): { title: string; detail: string } {
   if (process.platform === 'darwin') {
     return {
-      title: '访达右键「传送至对端」',
+      title: '请勾选访达「快速操作」',
       detail:
-        '若右键里暂时没有这项，需要到系统快捷键里勾选一次：\n\n1. 系统设置 → 键盘\n2. 点右上角「键盘快捷键…」\n3. 左侧选「服务」或「快速操作」\n4. 勾选「传送至对端」'
+        '已安装「传送至对端」。要在访达右键菜单里出现，需在系统设置中勾选一次：\n\n系统设置 → 键盘 → 键盘快捷键… → 服务 / 快速操作 → 勾选「传送至对端」\n\n点下方按钮可直接打开系统设置。'
     }
   }
   return {
