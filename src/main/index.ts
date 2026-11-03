@@ -16,6 +16,7 @@ import { getSettings, updateSettings, type PeerSwitchSettings } from './store'
 import { session } from './network'
 import { COMMON_INPUTS, ensureDownloadDir, switchMonitorInput } from './ddc'
 import { applyOpenAtLogin, isBackgroundLaunch } from './autostart'
+import { DEFAULT_PAIR_CODE, scanLanPeers } from './lan-scan'
 
 const isDev = !app.isPackaged
 
@@ -231,19 +232,22 @@ function registerIpc(): void {
   ipcMain.handle('inputs:common', () => COMMON_INPUTS)
 
   ipcMain.handle('host:start', async () => {
-    const settings = getSettings()
-    const code =
-      settings.lastRole === 'host' && settings.lastCode ? settings.lastCode : undefined
-    return session.startHost(code)
+    return session.startHost(DEFAULT_PAIR_CODE)
   })
   ipcMain.handle('host:join', async (_e, host: string, code: string) => {
-    updateSettings({ lastHost: host, lastCode: code, lastRole: 'client' })
-    await session.join(host, code)
+    const pair = code && /^\d{6}$/.test(code) ? code : DEFAULT_PAIR_CODE
+    updateSettings({ lastHost: host, lastCode: pair, lastRole: 'client' })
+    await session.join(host, pair)
   })
   ipcMain.handle('host:disconnect', () => {
     session.disconnect()
   })
   ipcMain.handle('host:state', () => session.state)
+  ipcMain.handle('lan:scan', async (event) => {
+    return scanLanPeers((done, total) => {
+      event.sender.send('lan-scan-progress', { done, total })
+    })
+  })
 
   ipcMain.handle('switch:now', async () => doSwitch())
   ipcMain.handle('switch:local', async (_e, input: string) => switchMonitorInput(input))
@@ -290,11 +294,9 @@ async function bootstrapService(): Promise<void> {
   // 开机自启后默认拉起主机监听，保证对端锁屏/本机锁屏时仍能收切换指令
   try {
     if (settings.autoHost || settings.lastRole === 'host' || !settings.lastRole) {
-      const code =
-        settings.lastCode && /^\d{6}$/.test(settings.lastCode) ? settings.lastCode : undefined
-      await session.startHost(code)
+      await session.startHost(DEFAULT_PAIR_CODE)
     } else if (settings.autoReconnect && settings.lastHost && settings.lastCode) {
-      await session.join(settings.lastHost, settings.lastCode)
+      await session.join(settings.lastHost, settings.lastCode || DEFAULT_PAIR_CODE)
     }
   } catch (e) {
     broadcast('log', `后台服务启动：${e instanceof Error ? e.message : String(e)}`)

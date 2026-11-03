@@ -439,6 +439,50 @@ h1 {
   text-decoration: underline;
 }
 
+.lan-hit-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+  max-height: 160px;
+  overflow: auto;
+}
+
+.lan-hit {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fbfbfd;
+  padding: 10px 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.lan-hit:hover {
+  border-color: rgba(0, 113, 227, 0.45);
+  background: rgba(0, 113, 227, 0.06);
+}
+
+.lan-hit.selected {
+  border-color: rgba(0, 113, 227, 0.65);
+  background: rgba(0, 113, 227, 0.1);
+}
+
+.lan-hit strong {
+  font-size: 14px;
+  letter-spacing: -0.01em;
+}
+
+.lan-hit span {
+  font-size: 11px;
+  color: var(--ink-tertiary);
+}
+
 .side-drawer .muted {
   margin: 0;
   color: var(--ink-secondary);

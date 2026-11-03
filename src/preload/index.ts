@@ -40,6 +40,8 @@ const api = {
   join: (host: string, code: string): Promise<void> => ipcRenderer.invoke('host:join', host, code),
   disconnect: (): Promise<void> => ipcRenderer.invoke('host:disconnect'),
   getState: (): Promise<ConnState> => ipcRenderer.invoke('host:state'),
+  scanLan: (): Promise<{ ip: string; port: number; ms: number }[]> =>
+    ipcRenderer.invoke('lan:scan'),
 
   switchNow: (): Promise<{ ok: boolean; detail: string }> => ipcRenderer.invoke('switch:now'),
   switchLocal: (input: string): Promise<{ ok: boolean; detail: string; code: number }> =>

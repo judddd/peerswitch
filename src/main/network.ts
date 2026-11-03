@@ -5,6 +5,7 @@ import { basename, join } from 'path'
 import { randomBytes } from 'crypto'
 import { getSettings, updateSettings } from './store'
 import { ensureDownloadDir, switchMonitorInput } from './ddc'
+import { DEFAULT_PAIR_CODE } from './lan-scan'
 
 export type ConnState =
   | { status: 'idle' }
@@ -245,9 +246,7 @@ export class PeerSession extends EventEmitter {
     this.disconnect()
     const settings = getSettings()
     const code =
-      preferCode && /^\d{6}$/.test(preferCode)
-        ? preferCode
-        : String(Math.floor(100000 + Math.random() * 900000))
+      preferCode && /^\d{6}$/.test(preferCode) ? preferCode : DEFAULT_PAIR_CODE
     this.expectedCode = code
 
     await new Promise<void>((resolve, reject) => {
@@ -307,8 +306,7 @@ export class PeerSession extends EventEmitter {
     const settings = getSettings()
     if (this.state.status === 'connected' || this.state.status === 'hosting') return
     if (settings.autoHost || settings.lastRole === 'host') {
-      const code = settings.lastCode && /^\d{6}$/.test(settings.lastCode) ? settings.lastCode : undefined
-      await this.startHost(code)
+      await this.startHost(DEFAULT_PAIR_CODE)
       return
     }
     if (settings.autoReconnect && settings.lastHost && settings.lastCode) {

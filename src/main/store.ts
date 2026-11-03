@@ -39,7 +39,7 @@ const defaults: PeerSwitchSettings = {
   autoReconnect: false,
   closeToTray: true,
   lastHost: '',
-  lastCode: '',
+  lastCode: '666666',
   lastRole: ''
 }
 
@@ -60,6 +60,9 @@ export function getSettings(): PeerSwitchSettings {
   const s = { ...defaults, ...store.store }
   if (!s.displayName) {
     s.displayName = hostname().split('.')[0] || '本机'
+  }
+  if (!s.lastCode || !/^\d{6}$/.test(s.lastCode)) {
+    s.lastCode = '666666'
   }
   const winLegacy = join(app.getPath('downloads'), 'PeerSwitch')
   if (!s.downloadDir) {

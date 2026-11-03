@@ -62,9 +62,12 @@ export default function App(): JSX.Element {
   const [state, setState] = useState<ConnState>({ status: 'idle' })
   const [panel, setPanel] = useState<Panel>('none')
   const [hostIp, setHostIp] = useState('')
-  const [joinCode, setJoinCode] = useState('')
+  const [joinCode, setJoinCode] = useState('666666')
   const [hostInfo, setHostInfo] = useState<{ code: string; port: number } | null>(null)
   const [busy, setBusy] = useState(false)
+  const [scanning, setScanning] = useState(false)
+  const [scanProgress, setScanProgress] = useState('')
+  const [lanHits, setLanHits] = useState<{ ip: string; port: number; ms: number }[]>([])
   const [log, setLog] = useState('')
   const [transfers, setTransfers] = useState<Transfer[]>([])
   const [pendingOffer, setPendingOffer] = useState<{
@@ -78,7 +81,7 @@ export default function App(): JSX.Element {
       const s = await window.peerswitch.getSettings()
       setSettings(s)
       setHostIp(s.lastHost || '')
-      setJoinCode(s.lastCode || '')
+      setJoinCode(s.lastCode && /^\d{6}$/.test(s.lastCode) ? s.lastCode : '666666')
       setInputs(await window.peerswitch.commonInputs())
       setState(await window.peerswitch.getState())
     })()
@@ -117,6 +120,10 @@ export default function App(): JSX.Element {
       }),
       window.peerswitch.on('open-panel', (p) => {
         if (p === 'files' || p === 'settings') setPanel(p)
+      }),
+      window.peerswitch.on('lan-scan-progress', (p) => {
+        const { done, total } = p as { done: number; total: number }
+        setScanProgress(`扫描中 ${done}/${total}`)
       })
     ]
     return () => offs.forEach((off) => off())
@@ -164,14 +171,45 @@ export default function App(): JSX.Element {
     }
   }
 
-  const onJoin = async (): Promise<void> => {
+  const onJoin = async (ip?: string): Promise<void> => {
+    const target = (ip || hostIp).trim()
+    const code = (joinCode.trim() || '666666').replace(/\D/g, '').slice(0, 6) || '666666'
+    if (!target) {
+      setLog('请选择或填写主机 IP')
+      return
+    }
     setBusy(true)
+    setHostIp(target)
+    setJoinCode(code)
     try {
-      await window.peerswitch.join(hostIp.trim(), joinCode.trim())
+      await window.peerswitch.join(target, code)
     } catch (e) {
       setLog(e instanceof Error ? e.message : String(e))
     } finally {
       setBusy(false)
+    }
+  }
+
+  const onScanLan = async (): Promise<void> => {
+    setScanning(true)
+    setScanProgress('开始扫描局域网…')
+    setLanHits([])
+    try {
+      const hits = await window.peerswitch.scanLan()
+      setLanHits(hits)
+      setScanProgress(
+        hits.length ? `发现 ${hits.length} 台开放 ${settings?.port || 37890} 端口的设备` : '未发现可用主机'
+      )
+      setLog(
+        hits.length
+          ? `扫描完成，可点击下方 IP 直接配对`
+          : `未扫到开放端口的主机，请确认对端已创建连接且在同一网段`
+      )
+    } catch (e) {
+      setScanProgress('')
+      setLog(e instanceof Error ? e.message : String(e))
+    } finally {
+      setScanning(false)
     }
   }
 
@@ -267,21 +305,51 @@ export default function App(): JSX.Element {
               <div className="card-row">
                 <div className="card">
                   <h2>创建连接</h2>
-                  <p>本机作为主机，把 6 位配对码发给另一台电脑。</p>
+                  <p>本机作为主机。默认配对码固定为 666666。</p>
                   <button className="btn btn-primary" disabled={busy} onClick={() => void onCreate()}>
                     创建连接
                   </button>
-                  {codeText && <div className="code-pill">{codeText}</div>}
+                  <div className="code-pill">{codeText || '666666'}</div>
                 </div>
 
                 <div className="card">
                   <h2>加入连接</h2>
-                  <p>填写主机 IP 与配对码，加入对方会话。</p>
+                  <p>扫描局域网开放端口的主机，点选 IP 即可配对（配对码默认 666666）。</p>
+                  <button
+                    className="btn btn-secondary"
+                    disabled={busy || scanning}
+                    onClick={() => void onScanLan()}
+                    style={{ marginBottom: 12, width: '100%' }}
+                  >
+                    {scanning ? scanProgress || '扫描中…' : '扫描局域网'}
+                  </button>
+                  {lanHits.length > 0 && (
+                    <div className="lan-hit-list">
+                      {lanHits.map((h) => (
+                        <button
+                          key={h.ip}
+                          type="button"
+                          className={`lan-hit ${hostIp === h.ip ? 'selected' : ''}`}
+                          disabled={busy}
+                          onClick={() => void onJoin(h.ip)}
+                          title={`延迟约 ${h.ms} ms，点击加入`}
+                        >
+                          <strong>{h.ip}</strong>
+                          <span>{h.ms} ms · 点击配对</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {!scanning && scanProgress && lanHits.length === 0 && (
+                    <p className="muted" style={{ marginBottom: 12 }}>
+                      {scanProgress}
+                    </p>
+                  )}
                   <div className="field">
-                    <label>主机 IP</label>
+                    <label>主机 IP（也可手动填写）</label>
                     <input
                       value={hostIp}
-                      placeholder="192.168.1.20"
+                      placeholder="192.168.3.231"
                       onChange={(e) => setHostIp(e.target.value)}
                     />
                   </div>
@@ -289,7 +357,7 @@ export default function App(): JSX.Element {
                     <label>配对码</label>
                     <input
                       value={joinCode}
-                      placeholder="123456"
+                      placeholder="666666"
                       maxLength={6}
                       onChange={(e) => setJoinCode(e.target.value.replace(/\D/g, ''))}
                     />
