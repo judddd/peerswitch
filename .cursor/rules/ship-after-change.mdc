@@ -1,0 +1,18 @@
+---
+description: 每次改完代码后自动本机换包并推送 GitHub
+alwaysApply: true
+---
+
+# 改完即交付
+
+对本仓库做完功能性修改后，**同一轮回复内必须做完**下面两步，不要等用户再提醒：
+
+1. **本机 Mac 换最新包**
+   - 执行 `bash scripts/deploy-local-mac.sh`
+   - 脚本会编译、打 `release/mac-arm64/PeerSwitch.app`，结束旧进程，并覆盖安装到 `/Applications/PeerSwitch.app` 后拉起
+2. **上传仓库**
+   - `git add` 相关改动并 commit（说明写清为什么改）
+   - `git push origin main`（远程：`https://github.com/judddd/peerswitch.git`）
+   - 不要提交 `node_modules`、`release`、`.npmrc`、密钥
+
+若只改了文档/规则且不影响运行，可跳过换包，但仍需按需提交推送。
