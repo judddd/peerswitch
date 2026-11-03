@@ -9,7 +9,8 @@ import {
   Tray,
   nativeImage,
   powerMonitor,
-  Notification
+  Notification,
+  screen
 } from 'electron'
 import { join } from 'path'
 import { getSettings, updateSettings, type PeerSwitchSettings } from './store'
@@ -21,8 +22,12 @@ import { DEFAULT_PAIR_CODE, scanLanPeers } from './lan-scan'
 const isDev = !app.isPackaged
 
 let mainWindow: BrowserWindow | null = null
+let dropWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let isQuitting = false
+
+const DROP_W = 228
+const DROP_H = 96
 
 function iconPath(): string {
   if (process.platform === 'win32') {
@@ -86,9 +91,86 @@ function showMainWindow(): void {
   if (process.platform === 'darwin') app.dock?.show()
 }
 
+function positionDropWindow(win: BrowserWindow): void {
+  const wa = screen.getPrimaryDisplay().workArea
+  win.setBounds({
+    x: Math.round(wa.x + wa.width - DROP_W - 18),
+    y: Math.round(wa.y + 10),
+    width: DROP_W,
+    height: DROP_H
+  })
+}
+
+function createDropWindow(): void {
+  if (dropWindow && !dropWindow.isDestroyed()) return
+
+  dropWindow = new BrowserWindow({
+    width: DROP_W,
+    height: DROP_H,
+    show: false,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    hasShadow: true,
+    focusable: true,
+    title: 'PeerSwitch 拖放',
+    backgroundColor: '#00000000',
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false
+    }
+  })
+
+  if (process.platform === 'darwin') {
+    dropWindow.setAlwaysOnTop(true, 'floating')
+    dropWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  }
+
+  positionDropWindow(dropWindow)
+
+  dropWindow.on('closed', () => {
+    dropWindow = null
+  })
+
+  if (isDev && process.env['ELECTRON_RENDERER_URL']) {
+    dropWindow.loadURL(`${process.env['ELECTRON_RENDERER_URL']}/drop.html`)
+  } else {
+    dropWindow.loadFile(join(__dirname, '../renderer/drop.html'))
+  }
+}
+
+function showDropWindow(): void {
+  if (!dropWindow || dropWindow.isDestroyed()) createDropWindow()
+  if (!dropWindow) return
+  positionDropWindow(dropWindow)
+  dropWindow.showInactive()
+}
+
+function hideDropWindow(): void {
+  if (dropWindow && !dropWindow.isDestroyed()) dropWindow.hide()
+}
+
+function toggleDropWindow(): void {
+  if (dropWindow && !dropWindow.isDestroyed() && dropWindow.isVisible()) {
+    hideDropWindow()
+  } else {
+    showDropWindow()
+  }
+}
+
 function broadcast(channel: string, payload: unknown): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(channel, payload)
+  }
+  if (dropWindow && !dropWindow.isDestroyed()) {
+    dropWindow.webContents.send(channel, payload)
   }
 }
 
@@ -103,6 +185,7 @@ function notify(title: string, body: string): void {
 }
 
 async function doSendFiles(): Promise<void> {
+  showDropWindow()
   showMainWindow()
   broadcast('open-panel', 'files')
   if (session.state.status !== 'connected') {
@@ -161,43 +244,61 @@ function buildTray(): void {
 
   tray = new Tray(image)
   tray.setToolTip('PeerSwitch 后台服务')
-  const menu = Menu.buildFromTemplate([
-    {
-      label: '显示主窗口',
-      click: () => showMainWindow()
-    },
-    {
-      label: '立即切换屏幕',
-      click: () => void doSwitch()
-    },
-    {
-      label: '传送文件…',
-      click: () => void doSendFiles()
-    },
-    { type: 'separator' },
-    {
-      label: '开机自启',
-      type: 'checkbox',
-      checked: getSettings().openAtLogin,
-      click: (item) => {
-        applyOpenAtLogin(item.checked)
-        updateSettings({ openAtLogin: item.checked })
-        broadcast('settings', getSettings())
+  const rebuildMenu = (): void => {
+    const dropVisible = Boolean(dropWindow && !dropWindow.isDestroyed() && dropWindow.isVisible())
+    const menu = Menu.buildFromTemplate([
+      {
+        label: '显示主窗口',
+        click: () => showMainWindow()
+      },
+      {
+        label: '立即切换屏幕',
+        click: () => void doSwitch()
+      },
+      {
+        label: dropVisible ? '隐藏拖放窗口' : '显示拖放窗口',
+        click: () => {
+          toggleDropWindow()
+          rebuildMenu()
+        }
+      },
+      {
+        label: '选择文件传送…',
+        click: () => void doSendFiles()
+      },
+      { type: 'separator' },
+      {
+        label: '开机自启',
+        type: 'checkbox',
+        checked: getSettings().openAtLogin,
+        click: (item) => {
+          applyOpenAtLogin(item.checked)
+          updateSettings({ openAtLogin: item.checked })
+          broadcast('settings', getSettings())
+        }
+      },
+      { type: 'separator' },
+      {
+        label: '退出 PeerSwitch',
+        click: () => {
+          isQuitting = true
+          app.quit()
+        }
       }
-    },
-    { type: 'separator' },
-    {
-      label: '退出 PeerSwitch',
-      click: () => {
-        isQuitting = true
-        app.quit()
-      }
-    }
-  ])
-  tray.setContextMenu(menu)
+    ])
+    tray?.setContextMenu(menu)
+  }
+
+  rebuildMenu()
   tray.on('double-click', () => showMainWindow())
   tray.on('click', () => {
-    if (process.platform !== 'darwin') showMainWindow()
+    // macOS：单击托盘切换右上角拖放窗；Windows 显示主窗口
+    if (process.platform === 'darwin') {
+      toggleDropWindow()
+      rebuildMenu()
+    } else {
+      showMainWindow()
+    }
   })
 }
 
@@ -297,6 +398,9 @@ function registerIpc(): void {
     return { openAtLogin: getSettings().openAtLogin, system: login }
   })
   ipcMain.handle('window:show', () => showMainWindow())
+  ipcMain.handle('drop:show', () => showDropWindow())
+  ipcMain.handle('drop:hide', () => hideDropWindow())
+  ipcMain.handle('drop:toggle', () => toggleDropWindow())
 }
 
 async function bootstrapService(): Promise<void> {
@@ -344,12 +448,21 @@ app.whenReady().then(async () => {
   wireSessionEvents()
   wirePowerEvents()
   createWindow()
+  createDropWindow()
   buildTray()
   registerHotkey()
   await bootstrapService()
+  // 菜单栏旁常驻拖放窗，方便直接拖文件上传
+  showDropWindow()
 
   app.on('activate', () => {
     showMainWindow()
+  })
+
+  screen.on('display-metrics-changed', () => {
+    if (dropWindow && !dropWindow.isDestroyed() && dropWindow.isVisible()) {
+      positionDropWindow(dropWindow)
+    }
   })
 })
 

@@ -1,0 +1,109 @@
+:root {
+  --ink: #1d1d1f;
+  --muted: #6e6e73;
+  --blue: #0071e3;
+  --line: rgba(0, 0, 0, 0.1);
+  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  font-family: var(--font);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+.shell {
+  height: 100%;
+  padding: 6px;
+}
+
+.panel {
+  height: 100%;
+  border-radius: 14px;
+  border: 1px dashed rgba(0, 0, 0, 0.2);
+  background: rgba(255, 255, 255, 0.86);
+  backdrop-filter: saturate(180%) blur(18px);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.12);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: var(--muted);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    transform 0.12s ease;
+}
+
+.panel.ready {
+  border-color: rgba(0, 113, 227, 0.35);
+}
+
+.panel.active {
+  border-style: solid;
+  border-color: var(--blue);
+  background: rgba(230, 242, 255, 0.95);
+  color: var(--blue);
+  transform: scale(1.02);
+}
+
+.panel strong {
+  font-size: 13px;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+}
+
+.panel.active strong {
+  color: var(--blue);
+}
+
+.panel span {
+  font-size: 11px;
+}
+
+.panel .hint {
+  font-size: 10px;
+  opacity: 0.85;
+}
+
+.close {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.08);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 18px;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.close:hover {
+  background: rgba(0, 0, 0, 0.14);
+}
+
+.drag-bar {
+  position: absolute;
+  top: 8px;
+  left: 14px;
+  right: 34px;
+  height: 16px;
+  -webkit-app-region: drag;
+}
