@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ConnState, PeerSwitchSettings } from '../../preload/index'
 
-type Panel = 'none' | 'files' | 'settings'
+type Panel = 'none' | 'settings'
 
 type Transfer = {
   id: string
@@ -114,10 +114,9 @@ export default function App(): JSX.Element {
       }),
       window.peerswitch.on('file-offer', (p) => {
         setPendingOffer(p as { id: string; name: string; size: number })
-        setPanel('files')
       }),
       window.peerswitch.on('open-panel', (p) => {
-        if (p === 'files' || p === 'settings') setPanel(p)
+        if (p === 'settings') setPanel('settings')
       }),
       window.peerswitch.on('lan-scan-progress', (p) => {
         const { done, total } = p as { done: number; total: number }
@@ -137,14 +136,6 @@ export default function App(): JSX.Element {
     }, 500)
     return () => clearInterval(timer)
   }, [])
-
-  const removeTransfer = (id: string): void => {
-    setTransfers((prev) => prev.filter((t) => t.id !== id))
-  }
-
-  const clearTransfers = (): void => {
-    setTransfers([])
-  }
 
   const fileHotkeyLabel =
     typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform)
@@ -205,7 +196,6 @@ export default function App(): JSX.Element {
       setLog('请先连接对端')
       return
     }
-    setPanel('files')
     try {
       await window.peerswitch.pickAndSendFiles()
     } catch (e) {
@@ -226,7 +216,6 @@ export default function App(): JSX.Element {
       setLog('请先连接对端')
       return
     }
-    setPanel('files')
     try {
       await window.peerswitch.sendFilePaths(paths)
       setLog(`正在发送 ${paths.length} 个文件…`)
@@ -268,54 +257,6 @@ export default function App(): JSX.Element {
           >
             <IconSwitch active={connected} />
           </button>
-
-          <div
-            className={`drop-zone ${dropActive ? 'active' : ''} ${connected ? 'ready' : ''} ${
-              panel === 'files' ? 'open' : ''
-            }`}
-            title={
-              connected
-                ? `拖入或点击选择文件（${fileHotkeyLabel}）`
-                : '连接对端后可拖入文件'
-            }
-            onDragEnter={(e) => {
-              e.preventDefault()
-              e.stopPropagation()
-              setDropActive(true)
-            }}
-            onDragOver={(e) => {
-              e.preventDefault()
-              e.stopPropagation()
-              setDropActive(true)
-            }}
-            onDragLeave={(e) => {
-              e.preventDefault()
-              e.stopPropagation()
-              setDropActive(false)
-            }}
-            onDrop={(e) => {
-              e.preventDefault()
-              e.stopPropagation()
-              setDropActive(false)
-              void sendDroppedFiles(e.dataTransfer.files)
-            }}
-            onClick={() => void onSendFiles()}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault()
-                void onSendFiles()
-              }
-            }}
-          >
-            <IconFiles />
-            <div className="drop-zone-text">
-              <strong>{dropActive ? '松开上传' : '拖入文件'}</strong>
-              <span>{connected ? '发送到对端' : '先连接对端'}</span>
-            </div>
-          </div>
-
           <button
             className={`icon-btn ${panel === 'settings' ? 'active' : ''}`}
             title="设置"
@@ -328,248 +269,256 @@ export default function App(): JSX.Element {
 
       <main className="content">
         <div className="panel-shell">
-          {!connected ? (
-            <div className="hero">
-              <div className="eyebrow">PeerSwitch</div>
-              <h1>一台显示器，两台电脑</h1>
+          <div className="hero">
+            <div className="eyebrow">PeerSwitch</div>
+            <h1>{connected ? `切换到 ${state.peerName}` : '一台显示器，两台电脑'}</h1>
 
-              <div className="card join-card">
-                <h2>加入对端</h2>
-                {settings.pairId || settings.lastHost ? (
-                  <div className="status-bar" style={{ marginBottom: 12 }}>
-                    <div>
-                      <span className="dot wait" />
-                      {settings.lastPeerName
-                        ? `正在连接 ${settings.lastPeerName}…`
-                        : settings.lastHost
-                          ? `正在重连 ${settings.lastHost}…`
-                          : '正在寻找对端…'}
+            <div className="card-row">
+              <div className="card">
+                {connected ? (
+                  <>
+                    <h2>连接</h2>
+                    <button
+                      className="switch-orb compact"
+                      onClick={() => void onSwitch()}
+                      disabled={busy}
+                    >
+                      <IconSwitch />
+                      <strong>切换屏幕</strong>
+                    </button>
+                    <p className="hotkey-hint" style={{ marginTop: 12 }}>
+                      <kbd>{formatHotkey(settings.hotkey)}</kbd>
+                    </p>
+                    <div className="status-bar" style={{ marginTop: 16 }}>
+                      <div>
+                        <span className="dot on" />
+                        {statusLabel}
+                      </div>
                     </div>
-                    {settings.lastHost ? (
+                    <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
                       <button
                         className="btn btn-secondary"
-                        onClick={() => void onJoin(settings.lastHost)}
+                        onClick={() => void window.peerswitch.disconnect()}
                       >
-                        立即重连
+                        暂时断开
                       </button>
+                      <button
+                        className="btn btn-danger"
+                        onClick={async () => {
+                          const next = await window.peerswitch.forgetPairing()
+                          setSettings(next)
+                          setHostIp('')
+                          setLog('已清除配对')
+                        }}
+                      >
+                        断开并忘记
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <h2>加入对端</h2>
+                    {settings.pairId || settings.lastHost ? (
+                      <div className="status-bar" style={{ marginBottom: 12 }}>
+                        <div>
+                          <span className="dot wait" />
+                          {settings.lastPeerName
+                            ? `正在连接 ${settings.lastPeerName}…`
+                            : settings.lastHost
+                              ? `正在重连 ${settings.lastHost}…`
+                              : '正在寻找对端…'}
+                        </div>
+                        {settings.lastHost ? (
+                          <button
+                            className="btn btn-secondary"
+                            onClick={() => void onJoin(settings.lastHost)}
+                          >
+                            立即重连
+                          </button>
+                        ) : null}
+                      </div>
                     ) : null}
+                    <button
+                      className="btn btn-secondary"
+                      disabled={busy || scanning}
+                      onClick={() => void onScanLan()}
+                      style={{ marginBottom: 12, width: '100%' }}
+                    >
+                      {scanning ? scanProgress || '扫描中…' : '扫描局域网'}
+                    </button>
+                    {lanHits.length > 0 && (
+                      <div className="lan-hit-list">
+                        {lanHits.map((h) => (
+                          <button
+                            key={h.ip}
+                            type="button"
+                            className={`lan-hit ${hostIp === h.ip ? 'selected' : ''}`}
+                            disabled={busy}
+                            onClick={() => void onJoin(h.ip)}
+                            title={`${h.ms} ms`}
+                          >
+                            <strong>{h.ip}</strong>
+                            <span>{h.ms} ms</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {!scanning && scanProgress && lanHits.length === 0 && (
+                      <p className="muted" style={{ marginBottom: 12 }}>
+                        {scanProgress}
+                      </p>
+                    )}
+                    <div className="field">
+                      <label>主机 IP</label>
+                      <input
+                        value={hostIp}
+                        placeholder="192.168.x.x"
+                        onChange={(e) => setHostIp(e.target.value)}
+                      />
+                    </div>
+                    <button
+                      className="btn btn-primary"
+                      disabled={busy || !hostIp}
+                      onClick={() => void onJoin()}
+                    >
+                      加入
+                    </button>
+                    <div className="status-bar" style={{ marginTop: 16 }}>
+                      <div>
+                        <span
+                          className={`dot ${
+                            state.status === 'hosting' || state.status === 'connecting'
+                              ? 'wait'
+                              : ''
+                          }`}
+                        />
+                        {statusLabel}
+                      </div>
+                      {state.status !== 'idle' && (
+                        <button
+                          className="btn btn-secondary"
+                          onClick={() => void window.peerswitch.disconnect()}
+                        >
+                          取消
+                        </button>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <div className="card upload-card">
+                <h2>传送文件</h2>
+                <div
+                  className={`file-drop ${dropActive ? 'active' : ''} ${connected ? 'ready' : ''}`}
+                  title={
+                    connected
+                      ? `拖入或点击选择（${fileHotkeyLabel}）`
+                      : '连接对端后可拖入文件'
+                  }
+                  onDragEnter={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    setDropActive(true)
+                  }}
+                  onDragOver={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    setDropActive(true)
+                  }}
+                  onDragLeave={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    setDropActive(false)
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    setDropActive(false)
+                    void sendDroppedFiles(e.dataTransfer.files)
+                  }}
+                  onClick={() => void onSendFiles()}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      void onSendFiles()
+                    }
+                  }}
+                >
+                  <IconFiles />
+                  <strong>{dropActive ? '松开上传' : '拖入文件'}</strong>
+                  <span>{connected ? '或点击选择文件' : '先连接对端'}</span>
+                </div>
+                {pendingOffer ? (
+                  <div className="transfer-item" style={{ marginTop: 12 }}>
+                    <div className="name">收到：{pendingOffer.name}</div>
+                    <div className="meta-row">
+                      <span>{formatBytes(pendingOffer.size)}</span>
+                      <span>
+                        <button
+                          className="btn btn-secondary"
+                          style={{ height: 28, marginRight: 6 }}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            void window.peerswitch.rejectFile(pendingOffer.id)
+                            setPendingOffer(null)
+                          }}
+                        >
+                          拒绝
+                        </button>
+                        <button
+                          className="btn btn-primary"
+                          style={{ height: 28 }}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            void window.peerswitch.acceptFile(
+                              pendingOffer.id,
+                              pendingOffer.name,
+                              pendingOffer.size
+                            )
+                            setPendingOffer(null)
+                          }}
+                        >
+                          接受
+                        </button>
+                      </span>
+                    </div>
+                  </div>
+                ) : null}
+                {transfers.length > 0 ? (
+                  <div className="transfer-list" style={{ marginTop: 12 }}>
+                    {transfers.slice(0, 4).map((t) => {
+                      const pct = t.size
+                        ? Math.min(100, Math.round((t.received / t.size) * 100))
+                        : 0
+                      return (
+                        <div className="transfer-item" key={t.id}>
+                          <div className="name">
+                            {t.direction === 'out' ? '↑' : '↓'} {t.name}
+                          </div>
+                          <div className="bar">
+                            <i style={{ width: `${t.done ? 100 : pct}%` }} />
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
                 ) : null}
                 <button
                   className="btn btn-secondary"
-                  disabled={busy || scanning}
-                  onClick={() => void onScanLan()}
-                  style={{ marginBottom: 12, width: '100%' }}
+                  style={{ marginTop: 12, width: '100%' }}
+                  onClick={() => void window.peerswitch.openDownloadDir()}
                 >
-                  {scanning ? scanProgress || '扫描中…' : '扫描局域网'}
-                </button>
-                {lanHits.length > 0 && (
-                  <div className="lan-hit-list">
-                    {lanHits.map((h) => (
-                      <button
-                        key={h.ip}
-                        type="button"
-                        className={`lan-hit ${hostIp === h.ip ? 'selected' : ''}`}
-                        disabled={busy}
-                        onClick={() => void onJoin(h.ip)}
-                        title={`${h.ms} ms`}
-                      >
-                        <strong>{h.ip}</strong>
-                        <span>{h.ms} ms</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {!scanning && scanProgress && lanHits.length === 0 && (
-                  <p className="muted" style={{ marginBottom: 12 }}>
-                    {scanProgress}
-                  </p>
-                )}
-                <div className="field">
-                  <label>主机 IP</label>
-                  <input
-                    value={hostIp}
-                    placeholder="192.168.x.x"
-                    onChange={(e) => setHostIp(e.target.value)}
-                  />
-                </div>
-                <button
-                  className="btn btn-primary"
-                  disabled={busy || !hostIp}
-                  onClick={() => void onJoin()}
-                >
-                  加入
+                  打开接收文件夹
                 </button>
               </div>
-
-              <div className="status-bar">
-                <div>
-                  <span
-                    className={`dot ${
-                      state.status === 'hosting' || state.status === 'connecting' ? 'wait' : ''
-                    }`}
-                  />
-                  {statusLabel}
-                </div>
-                {state.status !== 'idle' && (
-                  <button
-                    className="btn btn-secondary"
-                    onClick={() => void window.peerswitch.disconnect()}
-                  >
-                    取消
-                  </button>
-                )}
-              </div>
-              <div className="log-line">{log}</div>
             </div>
-          ) : (
-            <div className="hero connected-hero">
-              <div className="eyebrow">已连接</div>
-              <h1>切换到 {state.peerName}</h1>
 
-              <button className="switch-orb" onClick={() => void onSwitch()} disabled={busy}>
-                <IconSwitch />
-                <strong>切换</strong>
-                <span>屏幕</span>
-              </button>
-
-              <p className="hotkey-hint">
-                <kbd>{formatHotkey(settings.hotkey)}</kbd>
-                {' · '}
-                <kbd>{fileHotkeyLabel}</kbd>
-              </p>
-
-              <div className="status-bar" style={{ maxWidth: 520, margin: '28px auto 0' }}>
-                <div>
-                  <span className="dot on" />
-                  {statusLabel}
-                  {state.role === 'host' ? ' · 主机' : ' · 客户端'}
-                </div>
-                <button
-                  className="btn btn-secondary"
-                  onClick={() => void window.peerswitch.disconnect()}
-                >
-                  暂时断开
-                </button>
-                <button
-                  className="btn btn-danger"
-                  onClick={async () => {
-                    const next = await window.peerswitch.forgetPairing()
-                    setSettings(next)
-                    setHostIp('')
-                    setLog('已清除配对')
-                  }}
-                >
-                  断开并忘记
-                </button>
-              </div>
-              <div className="log-line">{log}</div>
-            </div>
-          )}
+            <div className="log-line">{log}</div>
+          </div>
         </div>
-
-        {panel === 'files' && (
-          <aside className="side-drawer">
-            <div className="drawer-head">
-              <h2>传送文件</h2>
-              <button className="icon-btn" title="关闭" onClick={() => setPanel('none')}>
-                ✕
-              </button>
-            </div>
-            <p className="muted">{connected ? '选择或拖入文件发送' : '未连接'}</p>
-            <button
-              className="btn btn-primary"
-              disabled={!connected}
-              onClick={() => void onSendFiles()}
-            >
-              选择文件发送
-            </button>
-            <button
-              className="btn btn-secondary"
-              onClick={() => void window.peerswitch.openDownloadDir()}
-            >
-              打开接收文件夹
-            </button>
-
-            {pendingOffer && (
-              <div className="transfer-item">
-                <div className="name">收到：{pendingOffer.name}</div>
-                <div className="meta-row">
-                  <span>{formatBytes(pendingOffer.size)}</span>
-                  <span>
-                    <button
-                      className="btn btn-secondary"
-                      style={{ height: 28, marginRight: 6 }}
-                      onClick={() => {
-                        void window.peerswitch.rejectFile(pendingOffer.id)
-                        setPendingOffer(null)
-                      }}
-                    >
-                      拒绝
-                    </button>
-                    <button
-                      className="btn btn-primary"
-                      style={{ height: 28 }}
-                      onClick={() => {
-                        void window.peerswitch.acceptFile(
-                          pendingOffer.id,
-                          pendingOffer.name,
-                          pendingOffer.size
-                        )
-                        setPendingOffer(null)
-                      }}
-                    >
-                      接受
-                    </button>
-                  </span>
-                </div>
-              </div>
-            )}
-
-            {transfers.length > 0 && (
-              <>
-                <div className="drawer-head" style={{ marginTop: 8 }}>
-                  <p className="muted" style={{ margin: 0 }}>
-                    当前传输
-                  </p>
-                  <button className="link-btn" onClick={clearTransfers}>
-                    清空
-                  </button>
-                </div>
-                <div className="transfer-list">
-                  {transfers.map((t) => {
-                    const pct = t.size ? Math.min(100, Math.round((t.received / t.size) * 100)) : 0
-                    return (
-                      <div className="transfer-item" key={t.id}>
-                        <div className="name-row">
-                          <div className="name">
-                            {t.direction === 'out' ? '↑' : '↓'} {t.name}
-                          </div>
-                          <button
-                            className="link-btn"
-                            title="删除此条"
-                            onClick={() => removeTransfer(t.id)}
-                          >
-                            删除
-                          </button>
-                        </div>
-                        <div className="bar">
-                          <i style={{ width: `${t.done ? 100 : pct}%` }} />
-                        </div>
-                        <div className="meta-row">
-                          <span>
-                            {formatBytes(t.received)} / {formatBytes(t.size)}
-                          </span>
-                          <span>{t.done ? '完成' : `${pct}%`}</span>
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              </>
-            )}
-          </aside>
-        )}
 
         {panel === 'settings' && (
           <aside className="side-drawer">

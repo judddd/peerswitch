@@ -199,7 +199,6 @@ async function doSwitch(): Promise<void> {
 }
 
 function trayMenu(): Menu {
-  const connected = session.state.status === 'connected'
   return Menu.buildFromTemplate([
     {
       label: '打开 PeerSwitch',
@@ -208,11 +207,6 @@ function trayMenu(): Menu {
     {
       label: '立即切换屏幕',
       click: () => void doSwitch()
-    },
-    {
-      label: '传送文件…',
-      enabled: connected,
-      click: () => void doSendFiles()
     },
     { type: 'separator' },
     {
