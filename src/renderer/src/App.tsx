@@ -339,10 +339,9 @@ export default function App(): JSX.Element {
                       </div>
                     ) : null}
                     <button
-                      className="btn btn-secondary"
+                      className="btn btn-secondary btn-block"
                       disabled={busy || scanning}
                       onClick={() => void onScanLan()}
-                      style={{ marginBottom: 12, width: '100%' }}
                     >
                       {scanning ? scanProgress || '扫描中…' : '扫描局域网'}
                     </button>
@@ -368,16 +367,19 @@ export default function App(): JSX.Element {
                         {scanProgress}
                       </p>
                     )}
-                    <div className="field">
+                    <div className="field" style={{ marginTop: 12 }}>
                       <label>主机 IP</label>
                       <input
                         value={hostIp}
                         placeholder="192.168.x.x"
                         onChange={(e) => setHostIp(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') void onJoin()
+                        }}
                       />
                     </div>
                     <button
-                      className="btn btn-primary"
+                      className="btn btn-primary btn-block"
                       disabled={busy || !hostIp}
                       onClick={() => void onJoin()}
                     >
