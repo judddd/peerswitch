@@ -26,6 +26,7 @@ import {
   applyShellIntegration,
   contextMenuGuideText,
   extractSendFiles,
+  isAccessibilityTrusted,
   openContextMenuSettings
 } from './shell-integration'
 import { store } from './store'
@@ -366,8 +367,7 @@ function registerIpc(): void {
 async function showContextMenuGuide(force = false): Promise<void> {
   if (process.platform !== 'darwin') return
   if (!getSettings().contextMenuSend) return
-  // v3：直接进快速操作/服务勾选，不再停键盘首页
-  if (!force && store.get('__context_menu_guide_v3')) return
+  if (!force && (store.get('__context_menu_guide_v4') || isAccessibilityTrusted())) return
 
   showMainWindow()
   const { title, detail } = contextMenuGuideText()
@@ -376,13 +376,12 @@ async function showContextMenuGuide(force = false): Promise<void> {
     title: 'PeerSwitch',
     message: title,
     detail,
-    buttons: ['去勾选快速操作', '稍后'],
+    buttons: ['打开辅助功能设置', '稍后'],
     defaultId: 0,
     cancelId: 1,
     noLink: true
   })
-  store.set('__context_menu_guide_v2', true)
-  store.set('__context_menu_guide_v3', true)
+  store.set('__context_menu_guide_v4', true)
   if (result.response === 0) {
     await openContextMenuSettings()
   }

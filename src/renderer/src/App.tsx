@@ -662,9 +662,9 @@ export default function App(): JSX.Element {
                 <button
                   className="btn btn-secondary"
                   style={{ marginBottom: 12 }}
-                  onClick={() => void window.peerswitch.showContextMenuGuide()}
+                  onClick={() => void window.peerswitch.openContextMenuSettings()}
                 >
-                  右键启用说明
+                  打开辅助功能设置
                 </button>
               ) : null}
 

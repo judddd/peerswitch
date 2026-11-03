@@ -1,4 +1,4 @@
-import { app, shell } from 'electron'
+import { app, shell, systemPreferences } from 'electron'
 import { execFile } from 'child_process'
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
@@ -323,118 +323,45 @@ export function shellIntegrationInstalled(): boolean {
   return false
 }
 
-/**
- * 直接打开「键盘快捷键」面板，并选中左侧「快速操作 / 服务」。
- * 目标是让用户勾选「传送至对端」，不要停在键盘设置首页。
- */
+export function isAccessibilityTrusted(): boolean {
+  if (process.platform !== 'darwin') return true
+  try {
+    return systemPreferences.isTrustedAccessibilityClient(false)
+  } catch {
+    return false
+  }
+}
+
+/** 打开「系统设置 → 隐私与安全性 → 辅助功能」，并弹出系统授权框 */
 export async function openContextMenuSettings(): Promise<void> {
   if (process.platform !== 'darwin') return
 
-  // 优先走 Shortcuts 深链，尽量别落在键盘首页
-  const deepLinks = [
-    'x-apple.systempreferences:com.apple.Keyboard-Settings.extension?Shortcuts',
-    'x-apple.systempreferences:com.apple.preference.keyboard?Shortcuts'
+  try {
+    systemPreferences.isTrustedAccessibilityClient(true)
+  } catch {
+    /* 部分环境不支持 prompt，仍打开设置页 */
+  }
+
+  const urls = [
+    'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility',
+    'x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility'
   ]
-  for (const url of deepLinks) {
+  for (const url of urls) {
     try {
       await shell.openExternal(url)
-      break
+      return
     } catch {
       /* try next */
     }
-  }
-
-  const script = `
-on clickNamedButton(proc, names)
-  tell process proc
-    set frontmost to true
-    repeat with nm in names
-      try
-        click (first button whose name contains (nm as text)) of window 1
-        return true
-      end try
-      try
-        repeat with g in groups of window 1
-          try
-            click (first button whose name contains (nm as text)) of g
-            return true
-          end try
-          try
-            repeat with g2 in groups of g
-              try
-                click (first button whose name contains (nm as text)) of g2
-                return true
-              end try
-            end repeat
-          end try
-        end repeat
-      end try
-    end repeat
-  end tell
-  return false
-end clickNamedButton
-
-on clickNamedRow(proc, names)
-  tell process proc
-    set frontmost to true
-    repeat with nm in names
-      set target to nm as text
-      -- outline / table / static text
-      try
-        click (first UI element whose name is target) of window 1
-        return true
-      end try
-      try
-        repeat with w in windows
-          try
-            click (first UI element whose name is target) of w
-            return true
-          end try
-          try
-            click (first static text whose value is target) of w
-            return true
-          end try
-          try
-            click (first row whose name is target) of outline 1 of scroll area 1 of splitter group 1 of w
-            return true
-          end try
-          try
-            click (first row whose name is target) of table 1 of scroll area 1 of splitter group 1 of w
-            return true
-          end try
-        end repeat
-      end try
-    end repeat
-  end tell
-  return false
-end clickNamedRow
-
-tell application "System Settings" to activate
-delay 0.6
-
-tell application "System Events"
-  -- 若还在键盘首页，点「键盘快捷键…」进入面板
-  my clickNamedButton("System Settings", {"键盘快捷键", "Keyboard Shortcuts"})
-  delay 0.8
-  -- 左侧优先「快速操作」，再「服务」
-  if not my clickNamedRow("System Settings", {"快速操作", "Quick Actions"}) then
-    my clickNamedRow("System Settings", {"服务", "Services"})
-  end if
-end tell
-`
-  try {
-    await execFileAsync('osascript', ['-e', script])
-  } catch {
-    /* 无辅助功能权限时，至少已尝试打开 Shortcuts 深链 */
   }
 }
 
 export function contextMenuGuideText(): { title: string; detail: string } {
   if (process.platform === 'darwin') {
     return {
-      title: '勾选「传送至对端」',
+      title: '启用访达右键「传送至对端」',
       detail:
-        '已安装访达右键项。请在打开的快捷键面板左侧选择「快速操作」或「服务」，勾选「传送至对端」。'
+        '请到「隐私与安全性 → 辅助功能」中打开 PeerSwitch。\n\n打开后，访达里选中文件，右键即可看到「传送至对端」。'
     }
   }
   return {
