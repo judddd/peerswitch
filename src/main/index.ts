@@ -401,11 +401,16 @@ async function bootstrapService(): Promise<void> {
   applyOpenAtLogin(settings.openAtLogin)
   await ensureDownloadDir(settings.downloadDir)
 
-  // 始终拉起端口监听；若已记住主机（Mac 固定 IP），Windows 开机后自动连回去
+  // 始终监听 + 局域网广播发现；两边 IP 变了也能靠 pairId 自动重连
   try {
     await session.startHost(DEFAULT_PAIR_CODE)
-    if (settings.autoReconnect && settings.lastHost) {
-      broadcast('log', `已记住主机 ${settings.lastHost}，开始自动配对…`)
+    if (settings.autoReconnect && (settings.pairId || settings.lastHost)) {
+      broadcast(
+        'log',
+        settings.pairId
+          ? `已记住配对，正在通过局域网广播寻找对端…`
+          : `已记住主机 ${settings.lastHost}，开始自动配对…`
+      )
       session.scheduleReconnect('开机启动')
     }
   } catch (e) {

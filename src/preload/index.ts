@@ -28,6 +28,9 @@ export type PeerSwitchSettings = {
   lastCode: string
   lastRole: 'host' | 'client' | ''
   pairRemembered: boolean
+  pairId: string
+  deviceId: string
+  lastPeerName: string
 }
 
 const api = {

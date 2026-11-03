@@ -383,21 +383,25 @@ export default function App(): JSX.Element {
                 <div className="card">
                   <h2>加入连接</h2>
                   <p>
-                    扫描或填写主机 IP（建议填固定 IP 的 Mac）。配对成功后会自动记住，Windows
-                    重启换 IP 也会自己连回去。配对码默认 666666。
+                    扫描或填写主机 IP。配对成功后双方会记住配对身份，以后哪怕两边 IP
+                    都变了，也会在局域网里自动找到对方。配对码默认 666666。
                   </p>
-                  {settings.lastHost ? (
+                  {settings.pairId || settings.lastHost ? (
                     <div className="status-bar" style={{ marginBottom: 12 }}>
                       <div>
                         <span className="dot wait" />
-                        已记住 {settings.lastHost}，正在自动重连…
+                        {settings.pairId
+                          ? `已记住配对${settings.lastPeerName ? `（${settings.lastPeerName}）` : ''}，广播发现中…`
+                          : `已记住 ${settings.lastHost}，正在自动重连…`}
                       </div>
-                      <button
-                        className="btn btn-secondary"
-                        onClick={() => void onJoin(settings.lastHost)}
-                      >
-                        立即重连
-                      </button>
+                      {settings.lastHost ? (
+                        <button
+                          className="btn btn-secondary"
+                          onClick={() => void onJoin(settings.lastHost)}
+                        >
+                          立即重连
+                        </button>
+                      ) : null}
                     </div>
                   ) : null}
                   <button
@@ -730,14 +734,17 @@ export default function App(): JSX.Element {
                   onClick={() => void saveSettings({ autoReconnect: !settings.autoReconnect })}
                 />
               </div>
-              {settings.lastHost ? (
+              {settings.pairId || settings.lastHost ? (
                 <p className="muted" style={{ margin: '4px 0 10px' }}>
-                  已记住主机 {settings.lastHost}
-                  {settings.lastRole === 'client' ? '（本机将主动连接）' : ''}
-                  。Windows 重启换 IP 也不用重新配对。
+                  {settings.pairId
+                    ? `配对 ID：${settings.pairId.slice(0, 8)}…（局域网广播发现）`
+                    : ''}
+                  {settings.lastHost ? ` 最近地址 ${settings.lastHost}` : ''}
+                  {settings.lastPeerName ? ` · ${settings.lastPeerName}` : ''}
+                  。两边 IP 漂移后也会自动重连。
                 </p>
               ) : null}
-              {settings.lastHost ? (
+              {settings.pairId || settings.lastHost ? (
                 <button
                   className="btn btn-secondary"
                   onClick={async () => {

@@ -6,6 +6,7 @@ import { randomBytes } from 'crypto'
 import { getSettings, rememberPairing, updateSettings } from './store'
 import { ensureDownloadDir, switchMonitorInput } from './ddc'
 import { DEFAULT_PAIR_CODE } from './lan-scan'
+import { Discovery, newPairId } from './discovery'
 
 export type ConnState =
   | { status: 'idle' }
@@ -14,8 +15,8 @@ export type ConnState =
   | { status: 'connected'; peerName: string; role: 'host' | 'client'; remoteAddress: string }
 
 type WireMsg =
-  | { type: 'hello'; name: string; code: string; role: 'host' | 'client' }
-  | { type: 'hello-ok'; name: string }
+  | { type: 'hello'; name: string; code: string; role: 'host' | 'client'; pairId?: string }
+  | { type: 'hello-ok'; name: string; pairId: string }
   | { type: 'hello-fail'; reason: string }
   | { type: 'switch'; peerInput: string; localInput: string; from: string }
   | { type: 'switch-done'; ok: boolean; detail: string; from: string }
@@ -64,6 +65,8 @@ export class PeerSession extends EventEmitter {
   private reconnectTimer: NodeJS.Timeout | null = null
   private reconnectAttempt = 0
   private suppressReconnect = false
+  private joining = false
+  private discovery: Discovery | null = null
   private incoming = new Map<
     string,
     { name: string; size: number; path: string; stream: ReturnType<typeof createWriteStream>; received: number }
@@ -117,12 +120,37 @@ export class PeerSession extends EventEmitter {
         this.setState({ status: 'idle' })
       }
       this.emit('log', '对端已断开')
-      // 客户端（通常是 Windows）断线后自动连回固定主机 IP（Mac）
-      if (wasClient || getSettings().lastRole === 'client') {
+      // 两边 IP 都可能变：靠 pairId 广播互相发现后再连
+      const s = getSettings()
+      if (s.autoReconnect && (s.pairId || s.lastHost)) {
         this.scheduleReconnect('连接断开')
       }
+      void wasClient
     })
     socket.on('error', (err) => this.emit('log', `连接错误：${err.message}`))
+  }
+
+  private ensureDiscovery(): void {
+    if (this.discovery) return
+    const settings = getSettings()
+    this.discovery = new Discovery(settings.deviceId)
+    this.discovery.on('peer', (info: { ip: string; beacon: { pairId: string; name: string; code: string } }) => {
+      const s = getSettings()
+      if (!s.autoReconnect || this.suppressReconnect) return
+      if (!s.pairId || info.beacon.pairId !== s.pairId) return
+      if (this.state.status === 'connected' || this.state.status === 'connecting' || this.joining) return
+      this.emit('log', `发现已配对设备 ${info.beacon.name} @ ${info.ip}，正在自动连接…`)
+      void this.join(info.ip, info.beacon.code || s.lastCode || DEFAULT_PAIR_CODE)
+        .then(() => {
+          this.reconnectAttempt = 0
+          this.clearReconnectTimer()
+        })
+        .catch((e) => {
+          this.emit('log', `发现后连接失败：${e instanceof Error ? e.message : String(e)}`)
+          this.scheduleReconnect()
+        })
+    })
+    this.discovery.start()
   }
 
   private cleanupSocket(): void {
@@ -142,20 +170,24 @@ export class PeerSession extends EventEmitter {
     }
   }
 
-  /** 按记住的主机 IP 自动重连；Windows 重启换 IP 也不影响，因为是 Windows 主动连 Mac */
+  /** 自动重连：先试上次 IP，同时靠 UDP pairId 发现（两边 IP 都可变） */
   scheduleReconnect(reason?: string): void {
     this.clearReconnectTimer()
     if (this.suppressReconnect) return
     const settings = getSettings()
-    if (!settings.autoReconnect || !settings.lastHost) return
+    if (!settings.autoReconnect || (!settings.lastHost && !settings.pairId)) return
     if (this.state.status === 'connected' || this.state.status === 'connecting') return
+
+    this.ensureDiscovery()
+    this.discovery?.broadcast()
 
     const delay = Math.min(30000, 1500 * Math.pow(1.6, this.reconnectAttempt))
     this.reconnectAttempt += 1
+    const target = settings.lastHost || '局域网已配对设备'
     if (reason) {
       this.emit(
         'log',
-        `${reason}，${Math.round(delay / 1000)} 秒后自动重连 ${settings.lastHost}…`
+        `${reason}，${Math.round(delay / 1000)} 秒后尝试重连（${target} / 广播发现）…`
       )
     }
     this.reconnectTimer = setTimeout(() => {
@@ -165,23 +197,27 @@ export class PeerSession extends EventEmitter {
 
   async tryAutoReconnect(): Promise<void> {
     const settings = getSettings()
-    if (!settings.autoReconnect || !settings.lastHost) return
+    if (!settings.autoReconnect) return
     if (this.state.status === 'connected') {
       this.reconnectAttempt = 0
       return
     }
-    try {
-      this.emit('log', `正在自动连接 ${settings.lastHost}…`)
-      await this.join(settings.lastHost, settings.lastCode || DEFAULT_PAIR_CODE)
-      this.reconnectAttempt = 0
-      this.emit('log', `已自动恢复与 ${settings.lastHost} 的配对`)
-    } catch (e) {
-      this.emit(
-        'log',
-        `自动重连失败：${e instanceof Error ? e.message : String(e)}`
-      )
-      this.scheduleReconnect()
+    this.ensureDiscovery()
+    this.discovery?.broadcast()
+
+    // 上次 IP 可能仍有效，先试；失败则继续等广播发现
+    if (settings.lastHost) {
+      try {
+        this.emit('log', `正在尝试上次地址 ${settings.lastHost}…`)
+        await this.join(settings.lastHost, settings.lastCode || DEFAULT_PAIR_CODE)
+        this.reconnectAttempt = 0
+        this.emit('log', `已自动恢复配对`)
+        return
+      } catch {
+        this.emit('log', `上次地址不可达，继续通过局域网广播寻找对端…`)
+      }
     }
+    this.scheduleReconnect()
   }
 
   private async onMessage(msg: WireMsg): Promise<void> {
@@ -193,9 +229,19 @@ export class PeerSession extends EventEmitter {
             this.socket?.end()
             return
           }
-          const name = getSettings().displayName
-          this.send({ type: 'hello-ok', name })
-          updateSettings({ lastRole: 'host', lastCode: this.expectedCode, pairRemembered: true })
+          const settings = getSettings()
+          const pairId = msg.pairId || settings.pairId || newPairId()
+          const name = settings.displayName
+          this.send({ type: 'hello-ok', name, pairId })
+          rememberPairing({
+            host: this.socket?.remoteAddress?.replace(/^::ffff:/, '') || settings.lastHost,
+            code: this.expectedCode,
+            role: 'host',
+            pairId,
+            peerName: msg.name
+          })
+          this.ensureDiscovery()
+          this.discovery?.broadcast()
           this.reconnectAttempt = 0
           this.clearReconnectTimer()
           this.setState({
@@ -204,14 +250,22 @@ export class PeerSession extends EventEmitter {
             role: 'host',
             remoteAddress: this.socket?.remoteAddress || ''
           })
-          this.emit('log', `已连接：${msg.name}`)
+          this.emit('log', `已连接：${msg.name}（已建立配对 ID，IP 变化后可自动发现）`)
         }
         break
       }
       case 'hello-ok': {
         const settings = getSettings()
-        // 客户端记住主机 IP（Mac 固定 IP），以后开机自动连，无需再扫
-        rememberPairing(settings.lastHost, this.expectedCode || DEFAULT_PAIR_CODE, 'client')
+        const pairId = msg.pairId || settings.pairId || newPairId()
+        rememberPairing({
+          host: settings.lastHost,
+          code: this.expectedCode || DEFAULT_PAIR_CODE,
+          role: 'client',
+          pairId,
+          peerName: msg.name
+        })
+        this.ensureDiscovery()
+        this.discovery?.broadcast()
         this.reconnectAttempt = 0
         this.clearReconnectTimer()
         this.setState({
@@ -220,7 +274,10 @@ export class PeerSession extends EventEmitter {
           role: 'client',
           remoteAddress: this.socket?.remoteAddress || ''
         })
-        this.emit('log', `已连接：${msg.name}（已记住主机 ${settings.lastHost}，开机将自动重连）`)
+        this.emit(
+          'log',
+          `已连接：${msg.name}（已记住配对，双方 IP 变化后也会自动重连）`
+        )
         break
       }
       case 'hello-fail': {
@@ -332,6 +389,7 @@ export class PeerSession extends EventEmitter {
       this.server.listen(settings.port, '0.0.0.0', () => resolve())
     })
 
+    this.ensureDiscovery()
     return { code, port: settings.port }
   }
 
@@ -339,42 +397,54 @@ export class PeerSession extends EventEmitter {
     this.cleanupSocket()
     const { code, port } = await this.ensureServer(preferCode)
     updateSettings({ lastRole: 'host', lastCode: code })
+    this.ensureDiscovery()
+    this.discovery?.broadcast()
     this.setState({ status: 'hosting', code, port })
-    this.emit('log', `主机已启动，端口 ${port}（始终监听，可被局域网扫描发现）`)
+    this.emit('log', `主机已启动，端口 ${port}（广播发现已开启，IP 变化可自动重配）`)
     return { code, port }
   }
 
   async join(host: string, code: string): Promise<void> {
-    const settings = getSettings()
-    const pair = code && /^\d{6}$/.test(code) ? code : DEFAULT_PAIR_CODE
-    // 先记住主机，即使本次失败，开机也会继续重试
-    rememberPairing(host, pair, 'client')
-    // 加入前先确保本机也在监听，否则对端扫不到 Windows
-    await this.ensureServer(pair)
-    this.cleanupSocket()
-    this.expectedCode = pair
-    this.setState({ status: 'connecting' })
+    if (this.joining) throw new Error('正在连接中')
+    this.joining = true
+    try {
+      const settings = getSettings()
+      const pair = code && /^\d{6}$/.test(code) ? code : DEFAULT_PAIR_CODE
+      rememberPairing({
+        host,
+        code: pair,
+        role: 'client',
+        pairId: settings.pairId || undefined
+      })
+      await this.ensureServer(pair)
+      this.cleanupSocket()
+      this.expectedCode = pair
+      this.setState({ status: 'connecting' })
 
-    await new Promise<void>((resolve, reject) => {
-      const socket = net.createConnection({ host, port: settings.port }, () => {
-        this.attachSocket(socket, 'client')
-        this.send({
-          type: 'hello',
-          name: settings.displayName,
-          code: pair,
-          role: 'client'
+      await new Promise<void>((resolve, reject) => {
+        const socket = net.createConnection({ host, port: settings.port }, () => {
+          this.attachSocket(socket, 'client')
+          this.send({
+            type: 'hello',
+            name: settings.displayName,
+            code: pair,
+            role: 'client',
+            pairId: getSettings().pairId || undefined
+          })
+          resolve()
         })
-        resolve()
+        socket.once('error', (err) => {
+          if (this.server) {
+            this.setState({ status: 'hosting', code: this.expectedCode, port: settings.port })
+          } else {
+            this.setState({ status: 'idle' })
+          }
+          reject(err)
+        })
       })
-      socket.once('error', (err) => {
-        if (this.server) {
-          this.setState({ status: 'hosting', code: this.expectedCode, port: settings.port })
-        } else {
-          this.setState({ status: 'idle' })
-        }
-        reject(err)
-      })
-    })
+    } finally {
+      this.joining = false
+    }
   }
 
   /** forget=true 时停止自动重连；默认断开仍保留配对记忆 */
@@ -412,6 +482,8 @@ export class PeerSession extends EventEmitter {
   shutdown(): void {
     this.suppressReconnect = true
     this.clearReconnectTimer()
+    this.discovery?.stop()
+    this.discovery = null
     this.cleanupSocket()
     if (this.server) {
       this.server.close()
@@ -437,7 +509,11 @@ export class PeerSession extends EventEmitter {
     } catch (e) {
       this.emit('log', `恢复监听失败：${e instanceof Error ? e.message : String(e)}`)
     }
-    if (settings.autoReconnect && settings.lastHost && this.state.status !== 'connected') {
+    if (
+      settings.autoReconnect &&
+      (settings.lastHost || settings.pairId) &&
+      this.state.status !== 'connected'
+    ) {
       this.scheduleReconnect('系统恢复')
     }
   }
