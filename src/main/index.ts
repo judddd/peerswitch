@@ -9,8 +9,7 @@ import {
   Tray,
   nativeImage,
   powerMonitor,
-  Notification,
-  screen
+  Notification
 } from 'electron'
 import { join } from 'path'
 import {
@@ -27,12 +26,8 @@ import { DEFAULT_PAIR_CODE, scanLanPeers } from './lan-scan'
 const isDev = !app.isPackaged
 
 let mainWindow: BrowserWindow | null = null
-let dropWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let isQuitting = false
-
-const TRAY_POPUP_W = 260
-const TRAY_POPUP_H = 320
 
 function iconPath(): string {
   if (process.platform === 'win32') {
@@ -96,102 +91,9 @@ function showMainWindow(): void {
   if (process.platform === 'darwin') app.dock?.show()
 }
 
-/** 托盘下拉面板贴在菜单栏图标下方（系统原生菜单无法拖文件，所以用自定义面板） */
-function positionTrayPopup(win: BrowserWindow): void {
-  const wa = screen.getPrimaryDisplay().workArea
-  const tb = tray?.getBounds()
-  let x: number
-  let y: number
-  if (tb && tb.width > 0) {
-    x = Math.round(tb.x + tb.width / 2 - TRAY_POPUP_W / 2)
-    y = Math.round(tb.y + tb.height + 6)
-    // Windows 托盘多半在底部
-    if (process.platform === 'win32' && tb.y > wa.height / 2) {
-      y = Math.round(tb.y - TRAY_POPUP_H - 6)
-    }
-  } else {
-    x = Math.round(wa.x + wa.width - TRAY_POPUP_W - 16)
-    y = Math.round(wa.y + 8)
-  }
-  x = Math.min(Math.max(wa.x + 8, x), wa.x + wa.width - TRAY_POPUP_W - 8)
-  y = Math.min(Math.max(wa.y + 4, y), wa.y + wa.height - TRAY_POPUP_H - 8)
-  win.setBounds({ x, y, width: TRAY_POPUP_W, height: TRAY_POPUP_H })
-}
-
-function createDropWindow(): void {
-  if (dropWindow && !dropWindow.isDestroyed()) return
-
-  dropWindow = new BrowserWindow({
-    width: TRAY_POPUP_W,
-    height: TRAY_POPUP_H,
-    show: false,
-    frame: false,
-    transparent: true,
-    resizable: false,
-    maximizable: false,
-    minimizable: false,
-    fullscreenable: false,
-    skipTaskbar: true,
-    alwaysOnTop: true,
-    hasShadow: true,
-    focusable: true,
-    title: 'PeerSwitch 菜单',
-    backgroundColor: '#00000000',
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: false
-    }
-  })
-
-  if (process.platform === 'darwin') {
-    dropWindow.setAlwaysOnTop(true, 'pop-up-menu')
-    dropWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
-  }
-
-  dropWindow.on('blur', () => {
-    // 失焦关闭，行为接近系统下拉菜单
-    if (!isQuitting) hideDropWindow()
-  })
-
-  dropWindow.on('closed', () => {
-    dropWindow = null
-  })
-
-  if (isDev && process.env['ELECTRON_RENDERER_URL']) {
-    dropWindow.loadURL(`${process.env['ELECTRON_RENDERER_URL']}/drop.html`)
-  } else {
-    dropWindow.loadFile(join(__dirname, '../renderer/drop.html'))
-  }
-}
-
-function showDropWindow(): void {
-  if (!dropWindow || dropWindow.isDestroyed()) createDropWindow()
-  if (!dropWindow) return
-  positionTrayPopup(dropWindow)
-  dropWindow.show()
-  dropWindow.focus()
-}
-
-function hideDropWindow(): void {
-  if (dropWindow && !dropWindow.isDestroyed()) dropWindow.hide()
-}
-
-function toggleDropWindow(): void {
-  if (dropWindow && !dropWindow.isDestroyed() && dropWindow.isVisible()) {
-    hideDropWindow()
-  } else {
-    showDropWindow()
-  }
-}
-
 function broadcast(channel: string, payload: unknown): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(channel, payload)
-  }
-  if (dropWindow && !dropWindow.isDestroyed()) {
-    dropWindow.webContents.send(channel, payload)
   }
 }
 
@@ -249,6 +151,37 @@ async function doSwitch(): Promise<void> {
   notify('PeerSwitch', result.detail)
 }
 
+function trayMenu(): Menu {
+  const connected = session.state.status === 'connected'
+  return Menu.buildFromTemplate([
+    {
+      label: '打开 PeerSwitch',
+      click: () => showMainWindow()
+    },
+    {
+      label: '立即切换屏幕',
+      click: () => void doSwitch()
+    },
+    {
+      label: '传送文件…',
+      enabled: connected,
+      click: () => void doSendFiles()
+    },
+    { type: 'separator' },
+    {
+      label: '退出',
+      click: () => {
+        isQuitting = true
+        app.quit()
+      }
+    }
+  ])
+}
+
+function refreshTrayMenu(): void {
+  tray?.setContextMenu(trayMenu())
+}
+
 function buildTray(): void {
   if (tray) return
   let image = nativeImage.createFromPath(iconPath())
@@ -263,16 +196,21 @@ function buildTray(): void {
 
   tray = new Tray(image)
   tray.setToolTip('PeerSwitch')
-  // 不用系统原生菜单：无法在菜单项里拖文件。改为自定义下拉面板。
-  tray.setContextMenu(null)
-  tray.on('click', () => toggleDropWindow())
-  tray.on('right-click', () => toggleDropWindow())
+  tray.setContextMenu(trayMenu())
+  tray.on('click', () => {
+    if (process.platform === 'darwin') {
+      tray?.popUpContextMenu()
+    } else {
+      showMainWindow()
+    }
+  })
   tray.on('double-click', () => showMainWindow())
 }
 
 function wireSessionEvents(): void {
   session.on('state', (state) => {
     broadcast('conn-state', state)
+    refreshTrayMenu()
     if (tray) {
       const tip =
         state.status === 'connected'
@@ -370,30 +308,6 @@ function registerIpc(): void {
     return { openAtLogin: getSettings().openAtLogin, system: login }
   })
   ipcMain.handle('window:show', () => showMainWindow())
-  ipcMain.handle('drop:show', () => showDropWindow())
-  ipcMain.handle('drop:hide', () => hideDropWindow())
-  ipcMain.handle('drop:toggle', () => toggleDropWindow())
-  ipcMain.handle('tray:action', async (_e, action: string) => {
-    switch (action) {
-      case 'show-main':
-        hideDropWindow()
-        showMainWindow()
-        break
-      case 'switch':
-        hideDropWindow()
-        await doSwitch()
-        break
-      case 'pick-files':
-        await doSendFiles()
-        break
-      case 'quit':
-        isQuitting = true
-        app.quit()
-        break
-      default:
-        break
-    }
-  })
 }
 
 async function bootstrapService(): Promise<void> {
@@ -443,7 +357,6 @@ app.whenReady().then(async () => {
   wireSessionEvents()
   wirePowerEvents()
   createWindow()
-  createDropWindow()
   buildTray()
   registerHotkey()
   await bootstrapService()

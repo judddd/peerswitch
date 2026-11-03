@@ -60,11 +60,7 @@ const api = {
   rejectFile: (id: string): Promise<void> => ipcRenderer.invoke('file:reject', id),
   openDownloadDir: (): Promise<void> => ipcRenderer.invoke('file:open-download-dir'),
 
-  showDropWindow: (): Promise<void> => ipcRenderer.invoke('drop:show'),
-  hideDropWindow: (): Promise<void> => ipcRenderer.invoke('drop:hide'),
-  toggleDropWindow: (): Promise<void> => ipcRenderer.invoke('drop:toggle'),
   showMainWindow: (): Promise<void> => ipcRenderer.invoke('window:show'),
-  trayAction: (action: string): Promise<void> => ipcRenderer.invoke('tray:action', action),
 
   on: (channel: string, cb: (payload: unknown) => void): (() => void) => {
     const listener = (_: Electron.IpcRendererEvent, payload: unknown): void => cb(payload)
