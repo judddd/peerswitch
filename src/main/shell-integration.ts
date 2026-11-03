@@ -323,36 +323,51 @@ export function shellIntegrationInstalled(): boolean {
   return false
 }
 
-/** 打开系统设置里键盘快捷键页（服务 / 快速操作） */
+/**
+ * 打开「键盘快捷键」面板（不是停在键盘首页）。
+ * macOS 把访达「服务/快速操作」放在：系统设置 → 键盘 → 键盘快捷键…
+ */
 export async function openContextMenuSettings(): Promise<void> {
-  if (process.platform === 'darwin') {
-    const candidates = [
-      'x-apple.systempreferences:com.apple.Keyboard-Settings.extension',
-      'x-apple.systempreferences:com.apple.preference.keyboard'
-    ]
-    for (const url of candidates) {
-      try {
-        await shell.openExternal(url)
-        return
-      } catch {
-        /* try next */
-      }
-    }
-    await shell.openExternal('x-apple.systempreferences:com.apple.Keyboard-Settings.extension')
+  if (process.platform !== 'darwin') return
+
+  // 先进入键盘页，再点「键盘快捷键…」打开真正的快捷键面板
+  const script = `
+tell application "System Settings"
+  activate
+  try
+    set current pane to pane id "com.apple.Keyboard-Settings.extension"
+  end try
+end tell
+delay 0.9
+tell application "System Events"
+  tell process "System Settings"
+    set frontmost to true
+    -- 点「键盘快捷键…」/ Keyboard Shortcuts…
+    try
+      click (first button whose name contains "键盘快捷键" or name contains "Keyboard Shortcuts") of window 1
+    end try
+  end tell
+end tell
+`
+  try {
+    await execFileAsync('osascript', ['-e', script])
     return
+  } catch {
+    /* 无辅助功能权限时退回手动路径说明 */
   }
-  if (process.platform === 'win32') {
-    // Windows 右键写入注册表后一般立刻可用，打开文件夹作示意
-    await shell.openPath(homedir())
+  try {
+    await shell.openExternal('x-apple.systempreferences:com.apple.Keyboard-Settings.extension')
+  } catch {
+    /* ignore */
   }
 }
 
 export function contextMenuGuideText(): { title: string; detail: string } {
   if (process.platform === 'darwin') {
     return {
-      title: '启用右键「传送至对端」',
+      title: '访达右键「传送至对端」',
       detail:
-        '已安装访达快速操作。若右键菜单暂时看不到：\n系统设置 → 键盘 → 键盘快捷键 → 服务（或快速操作）→ 勾选「传送至对端」。'
+        '若右键里暂时没有这项，需要到系统快捷键里勾选一次：\n\n1. 系统设置 → 键盘\n2. 点右上角「键盘快捷键…」\n3. 左侧选「服务」或「快速操作」\n4. 勾选「传送至对端」'
     }
   }
   return {

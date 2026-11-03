@@ -369,8 +369,9 @@ async function showContextMenuGuide(force = false): Promise<void> {
 
   showMainWindow()
   const { title, detail } = contextMenuGuideText()
+  // 默认「知道了」，避免一启动就丢进系统设置
   const buttons =
-    process.platform === 'darwin' ? ['打开系统设置', '知道了'] : ['知道了']
+    process.platform === 'darwin' ? ['知道了', '打开键盘快捷键…'] : ['知道了']
   const result = await dialog.showMessageBox(mainWindow ?? undefined!, {
     type: 'info',
     title: 'PeerSwitch',
@@ -378,11 +379,11 @@ async function showContextMenuGuide(force = false): Promise<void> {
     detail,
     buttons,
     defaultId: 0,
-    cancelId: buttons.length - 1,
+    cancelId: 0,
     noLink: true
   })
   store.set('__context_menu_guide_v1', true)
-  if (process.platform === 'darwin' && result.response === 0) {
+  if (process.platform === 'darwin' && result.response === 1) {
     await openContextMenuSettings()
   }
 }

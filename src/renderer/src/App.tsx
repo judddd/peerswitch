@@ -662,7 +662,7 @@ export default function App(): JSX.Element {
                   style={{ marginBottom: 12 }}
                   onClick={() => void window.peerswitch.showContextMenuGuide()}
                 >
-                  右键启用指引
+                  右键启用说明
                 </button>
               ) : null}
 
